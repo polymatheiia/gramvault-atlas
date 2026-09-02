@@ -23,6 +23,7 @@ Design:
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,6 +53,17 @@ def get_collection(config: Config | None = None):
     config = config or get_config()
     client = _client(config)
     return client.get_or_create_collection(COLLECTION_NAME)
+
+
+def reset_collection(config: Config | None = None) -> None:
+    """Drop and recreate the collection — every embedding is discarded.
+    Used before a re-embed when the embedding model (and so the vector
+    dimension) changes, since Chroma can't hold a mixed collection."""
+    config = config or get_config()
+    client = _client(config)
+    with contextlib.suppress(Exception):  # "collection doesn't exist" is fine
+        client.delete_collection(COLLECTION_NAME)
+    client.get_or_create_collection(COLLECTION_NAME)
 
 
 def upsert_item(

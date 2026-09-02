@@ -27,6 +27,7 @@ from gramvault.api import (
     routes_import,
     routes_jobs,
     routes_library,
+    routes_models,
 )
 from gramvault.config import Config, get_config
 from gramvault.db.session import get_connection, init_db
@@ -108,6 +109,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(routes_library.router)
     app.include_router(routes_enrich.router)
     app.include_router(routes_jobs.router)
+    app.include_router(routes_models.router)
     app.include_router(routes_chat.router)
     app.include_router(routes_export.router)
 

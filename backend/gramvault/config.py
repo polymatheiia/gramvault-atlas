@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 from functools import lru_cache
@@ -40,9 +41,11 @@ ENV_NESTING_DELIMITER = "__"
 # meant to be run from the repo root (or wherever `config.yaml` lives) —
 # this is a discovery convention, not a hardcoded data path.
 DEFAULT_CONFIG_FILENAME = "config.yaml"
-# Sibling file holding provider API keys and the auth token. Gitignored;
-# chmod 600. Kept out of config.yaml so a config can be shared/committed
-# without leaking credentials.
+# Sibling file for everything the Models settings page manages — provider
+# routing (`ai:` / `providers:`), API keys, and the auth token. Deep-merged
+# over config.yaml at load time so config.yaml stays hand-authored and
+# fully commented. Gitignored; chmod 600 (it holds credentials). You can
+# still put `ai:` / `providers:` in config.yaml by hand if you prefer.
 SECRETS_FILENAME = "secrets.yaml"
 
 
@@ -358,6 +361,41 @@ def get_config_path() -> Path:
 def get_secrets_path() -> Path:
     """Where `secrets.yaml` writes should target — beside `config.yaml`."""
     return get_config_path().parent / SECRETS_FILENAME
+
+
+def update_secrets(patch: dict[str, Any], config_path: Path) -> Config:
+    """Deep-merge `patch` into the `secrets.yaml` beside `config_path`
+    (creating it, `chmod 600`), then return the freshly loaded config.
+    `patch` mirrors the Config shape, e.g. `{"ai": {"chat": {...}}}` or
+    `{"providers": {"anthropic": {"api_key": "sk-..."}}}`; a leaf value of
+    `None` deletes that key. `config_path` is passed explicitly (see
+    `get_config_path`) so tests can point this at a tmp file."""
+    secrets_path = config_path.parent / SECRETS_FILENAME
+    current: dict[str, Any] = {}
+    if secrets_path.exists():
+        loaded = yaml.safe_load(secrets_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            current = loaded
+
+    def _merge(base: dict[str, Any], overlay: dict[str, Any]) -> None:
+        for key, value in overlay.items():
+            if value is None:
+                base.pop(key, None)
+            elif isinstance(value, dict) and isinstance(base.get(key), dict):
+                _merge(base[key], value)
+            else:
+                base[key] = value
+
+    _merge(current, patch)
+    secrets_path.parent.mkdir(parents=True, exist_ok=True)
+    secrets_path.write_text(
+        yaml.safe_dump(current, sort_keys=True, default_flow_style=False), encoding="utf-8"
+    )
+    with contextlib.suppress(OSError):  # e.g. Windows
+        secrets_path.chmod(0o600)
+
+    get_config.cache_clear()
+    return load_config(config_path)
 
 
 def save_obsidian_vault_dir(vault_dir: str | None, config_path: Path) -> Config:
