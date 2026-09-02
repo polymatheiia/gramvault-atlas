@@ -397,6 +397,66 @@ def import_categories_command(
         typer.echo(f"  {n} row(s) skipped — unknown category '{name}'.")
 
 
+@app.command(name="categorize")
+def categorize_command(
+    method: str = typer.Option(
+        "keyword_then_llm",
+        help="keyword | llm | keyword_then_llm (LLM needs the `categorize` provider ready)",
+    ),
+    scope: str = typer.Option(
+        "uncategorized", help="uncategorized | needs_review | all"
+    ),
+) -> None:
+    """Sort items into categories (the reels-workflow D2/D3 passes).
+
+    `keyword` is free and offline; `llm` re-labels every item through the
+    configured `categorize` model; `keyword_then_llm` (the default) runs
+    the keyword vote first and only sends its low-confidence guesses to the
+    model. Items assigned a category by hand are never touched. Safe to
+    interrupt and re-run.
+    """
+    import asyncio
+
+    from gramvault.ai import classifier
+    from gramvault.db.session import session_scope
+
+    if method not in ("keyword", "llm", "keyword_then_llm"):
+        typer.echo(f"Unknown method: {method}")
+        raise typer.Exit(code=1)
+
+    config = get_config()
+    with session_scope(config) as conn:
+        if scope == "uncategorized":
+            sql = "SELECT id FROM items WHERE category_id IS NULL"
+        elif scope == "needs_review":
+            sql = (
+                "SELECT id FROM items WHERE category_id IS NOT NULL "
+                "AND COALESCE(category_source, '') != 'manual' "
+                "AND COALESCE(category_confidence, 0) < 0.6"
+            )
+        elif scope == "all":
+            sql = "SELECT id FROM items WHERE COALESCE(category_source, '') != 'manual'"
+        else:
+            typer.echo(f"Unknown scope: {scope}")
+            raise typer.Exit(code=1)
+        item_ids = [row["id"] for row in conn.execute(sql)]
+
+    if not item_ids:
+        typer.echo(f"No items match scope '{scope}'.")
+        return
+
+    typer.echo(f"Categorising {len(item_ids)} item(s) with '{method}'. Safe to interrupt.")
+    summary = asyncio.run(classifier.categorize_items(item_ids, method, config))
+
+    typer.echo(
+        f"\nDone. {summary['processed']} labelled "
+        f"({summary['keyword']} keyword, {summary['llm']} LLM), "
+        f"{summary['needs_review']} need review, {summary['skipped_manual']} left (manual)."
+    )
+    for name, count in sorted(summary["by_category"].items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {name:20s} {count}")
+
+
 @app.command(name="migrate")
 def migrate_command(
     status_only: bool = typer.Option(

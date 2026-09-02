@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from gramvault.api import (
     auth,
     jobs,
+    routes_categorize,
     routes_chat,
     routes_enrich,
     routes_export,
@@ -113,6 +114,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(routes_import.router)
     app.include_router(routes_library.router)
     app.include_router(routes_enrich.router)
+    app.include_router(routes_categorize.router)
     app.include_router(routes_jobs.router)
     app.include_router(routes_models.router)
     app.include_router(routes_chat.router)

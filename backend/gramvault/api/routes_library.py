@@ -127,6 +127,7 @@ def _row_to_item(conn: sqlite3.Connection, row: sqlite3.Row) -> Item:
         category=data.get("category_name"),
         category_source=data.get("category_source"),
         category_confidence=data.get("category_confidence"),
+        category_reason=data.get("category_reason"),
         tags=_fetch_tags(conn, data["id"]),
         media_files=_fetch_media_files(conn, data["id"]),
     )
@@ -149,6 +150,10 @@ async def list_items(
         description=f"Filter by category name, or '{UNCATEGORIZED}' for items with no category",
     ),
     q: str | None = Query(default=None, description="Free-text search over captions"),
+    needs_review: bool = Query(
+        default=False,
+        description="Only items with a low-confidence automatic category (the review queue)",
+    ),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
     page: int = Query(default=1, ge=1),
@@ -175,6 +180,12 @@ async def list_items(
     if q:
         clauses.append("items.caption LIKE ?")
         params.append(f"%{q}%")
+    if needs_review:
+        clauses.append(
+            "items.category_id IS NOT NULL "
+            "AND COALESCE(items.category_source, '') != 'manual' "
+            "AND COALESCE(items.category_confidence, 0) < 0.6"
+        )
     if date_from:
         clauses.append("items.taken_at >= ?")
         params.append(date_from.isoformat())

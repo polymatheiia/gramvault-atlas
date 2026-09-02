@@ -246,6 +246,7 @@ def fetch_items(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, Item
             category=row["category_name"],
             category_source=row["category_source"],
             category_confidence=row["category_confidence"],
+            category_reason=row["category_reason"],
             tags=[],
             media_files=[],
         )
