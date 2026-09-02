@@ -43,3 +43,6 @@ Thumbs.db
 
 # --- Active local config (may contain personal paths like your Obsidian vault) ---
 config.yaml
+
+# --- Provider API keys + auth token — never commit ---
+secrets.yaml

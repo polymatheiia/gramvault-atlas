@@ -29,11 +29,15 @@ from typing import Any
 
 import httpx
 
+from gramvault.ai.errors import ProviderNotReadyError
 from gramvault.config import Config, get_config
 
 
-class OllamaError(Exception):
-    """Base class for all Ollama-related failures."""
+class OllamaError(ProviderNotReadyError):
+    """Base class for all Ollama-related failures. Subclasses
+    `ProviderNotReadyError` so provider-agnostic call sites can catch the
+    one exception, while existing `except OllamaNotRunningError` code
+    keeps working."""
 
 
 class OllamaNotRunningError(OllamaError):
@@ -114,6 +118,52 @@ async def ensure_model_pulled(model: str, config: Config | None = None) -> None:
     """Raise `ModelNotPulledError` if `model` isn't pulled locally."""
     if not await is_model_pulled(model, config):
         raise ModelNotPulledError(model)
+
+
+async def list_local_models(config: Config | None = None) -> list[dict[str, Any]]:
+    """Every locally-pulled model as reported by `GET /api/tags`
+    (`{name, size, modified_at, ...}`). Empty list if Ollama isn't up."""
+    config = config or get_config()
+    try:
+        async with _client(config, timeout=10.0) as client:
+            resp = await client.get("/api/tags")
+            resp.raise_for_status()
+            return resp.json().get("models", [])
+    except httpx.HTTPError:
+        return []
+
+
+async def pull_model(model: str, config: Config | None = None) -> AsyncIterator[dict[str, Any]]:
+    """Pull `model`, yielding Ollama's streamed progress objects
+    (`{status, completed?, total?}`). Raises `OllamaNotRunningError` if the
+    server can't be reached before the stream starts."""
+    config = config or get_config()
+    import json as _json
+
+    client = _client(config, timeout=None)
+    try:
+        async with client.stream(
+            "POST", "/api/pull", json={"model": model, "stream": True}
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if line.strip():
+                    yield _json.loads(line)
+    except httpx.ConnectError as exc:
+        raise OllamaNotRunningError(config.ollama.host, exc) from exc
+    finally:
+        await client.aclose()
+
+
+async def delete_model(model: str, config: Config | None = None) -> None:
+    """Delete a locally-pulled model (`DELETE /api/delete`)."""
+    config = config or get_config()
+    try:
+        async with _client(config) as client:
+            resp = await client.request("DELETE", "/api/delete", json={"model": model})
+            resp.raise_for_status()
+    except httpx.ConnectError as exc:
+        raise OllamaNotRunningError(config.ollama.host, exc) from exc
 
 
 async def embed(text: str, model: str | None = None, config: Config | None = None) -> list[float]:

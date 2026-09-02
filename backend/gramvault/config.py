@@ -40,6 +40,10 @@ ENV_NESTING_DELIMITER = "__"
 # meant to be run from the repo root (or wherever `config.yaml` lives) —
 # this is a discovery convention, not a hardcoded data path.
 DEFAULT_CONFIG_FILENAME = "config.yaml"
+# Sibling file holding provider API keys and the auth token. Gitignored;
+# chmod 600. Kept out of config.yaml so a config can be shared/committed
+# without leaking credentials.
+SECRETS_FILENAME = "secrets.yaml"
 
 
 class PathsConfig(BaseModel):
@@ -97,13 +101,60 @@ class ExportConfig(BaseModel):
     media_mode: Literal["copy", "link"] = "copy"
 
 
+ProviderKind = Literal["ollama", "openai", "anthropic"]
+
+# Tasks that can be routed to a provider independently.
+AI_TASKS = ("chat", "vision", "embedding", "categorize", "digest")
+
+
+class ProviderConfig(BaseModel):
+    """One model backend. API keys are NOT stored here — they come from
+    `secrets.yaml` (merged in at load time) or the `api_key_env`
+    environment variable."""
+
+    kind: ProviderKind = "ollama"
+    # Endpoint override: the Ollama host, or an OpenAI-compatible base URL
+    # (OpenRouter/Groq/vLLM/LM Studio/...). None -> the kind's default.
+    base_url: str | None = None
+    api_key: str | None = None
+    api_key_env: str | None = None
+
+
+class TaskModelConfig(BaseModel):
+    provider: str  # key into Config.providers
+    model: str
+
+
+class AIConfig(BaseModel):
+    """Per-task provider/model selection. A task left None falls back to
+    the legacy flat `models:` / `ollama:` config (see Config.resolve_task),
+    so an existing config.yaml keeps working unchanged."""
+
+    chat: TaskModelConfig | None = None
+    vision: TaskModelConfig | None = None
+    embedding: TaskModelConfig | None = None
+    categorize: TaskModelConfig | None = None
+    digest: TaskModelConfig | None = None
+
+
+class AuthConfig(BaseModel):
+    """API auth. When `token` is set, every `/api/*` request must carry
+    `Authorization: Bearer <token>`. Null (default) = no auth, which is
+    only safe on a loopback / trusted-tailnet bind."""
+
+    token: str | None = None
+
+
 class Config(BaseModel):
     paths: PathsConfig = Field(default_factory=PathsConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    ai: AIConfig = Field(default_factory=AIConfig)
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     video: VideoConfig = Field(default_factory=VideoConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
 
     # --- convenience resolved paths (absolute, based on cwd) ---
@@ -125,6 +176,40 @@ class Config(BaseModel):
         if self.paths.obsidian_vault_dir is None:
             return None
         return Path(self.paths.obsidian_vault_dir).expanduser().resolve()
+
+    # --- AI task -> (provider, model) resolution ---
+
+    def resolve_task(self, task: str) -> tuple[ProviderConfig, str]:
+        """Return `(ProviderConfig, model_name)` for an AI task
+        ('chat' | 'vision' | 'embedding' | 'categorize' | 'digest').
+
+        Uses the `ai:` block when it specifies the task; otherwise falls
+        back to the legacy flat config so an old config.yaml still works:
+        `chat`/`categorize`/`digest` -> `models.chat_model`,
+        `vision` -> `models.vision_model`, `embedding` ->
+        `models.embedding_model`, all on the `ollama` host.
+        """
+        if task not in AI_TASKS:
+            raise ValueError(f"unknown AI task {task!r}")
+
+        selection: TaskModelConfig | None = getattr(self.ai, task)
+        if selection is not None:
+            provider = self.providers.get(selection.provider)
+            if provider is None:
+                # A provider name with no `providers:` entry: assume a
+                # local Ollama at the default host (the common "I just
+                # named it" case).
+                provider = ProviderConfig(kind="ollama")
+            return provider, selection.model
+
+        legacy_model = {
+            "chat": self.models.chat_model,
+            "categorize": self.models.chat_model,
+            "digest": self.models.chat_model,
+            "vision": self.models.vision_model,
+            "embedding": self.models.embedding_model,
+        }[task]
+        return ProviderConfig(kind="ollama", base_url=self.ollama.host), legacy_model
 
 
 def _find_config_path() -> Path | None:
@@ -186,8 +271,47 @@ def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge `overlay` into `base` (mutating `base`)."""
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
+def _load_secrets(config_path: Path | None) -> dict[str, Any]:
+    """Read `secrets.yaml` sitting beside `config.yaml`, if present.
+
+    Shape mirrors the parts of Config that hold credentials:
+        providers: {anthropic: {api_key: sk-...}}
+        auth: {token: ...}
+    """
+    if config_path is None:
+        return {}
+    secrets_path = config_path.parent / SECRETS_FILENAME
+    if not secrets_path.exists():
+        return {}
+    with secrets_path.open("r", encoding="utf-8") as f:
+        loaded = yaml.safe_load(f)
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _resolve_provider_key_envs(raw: dict[str, Any]) -> None:
+    """For any provider with `api_key_env` set and no explicit `api_key`,
+    pull the key from that environment variable."""
+    for provider in (raw.get("providers") or {}).values():
+        if not isinstance(provider, dict):
+            continue
+        env_name = provider.get("api_key_env")
+        if env_name and not provider.get("api_key") and os.environ.get(env_name):
+            provider["api_key"] = os.environ[env_name]
+
+
 def load_config(path: Path | None = None) -> Config:
-    """Load configuration from YAML (if present) + environment overrides.
+    """Load configuration from YAML (if present) + `secrets.yaml` +
+    environment overrides.
 
     This does NOT cache — use `get_config()` for the cached singleton.
     Passing an explicit `path` is mainly useful for tests.
@@ -201,7 +325,9 @@ def load_config(path: Path | None = None) -> Config:
             if loaded:
                 raw = loaded
 
+    _deep_merge(raw, _load_secrets(config_path))
     raw = _apply_env_overrides(raw)
+    _resolve_provider_key_envs(raw)
     return Config.model_validate(raw)
 
 
@@ -227,6 +353,11 @@ def get_config_path() -> Path:
     `gramvault.api.deps.get_config_path_dependency`) — tests must never
     resolve this to the real project's config.yaml."""
     return _find_config_path() or (Path.cwd() / DEFAULT_CONFIG_FILENAME)
+
+
+def get_secrets_path() -> Path:
+    """Where `secrets.yaml` writes should target — beside `config.yaml`."""
+    return get_config_path().parent / SECRETS_FILENAME
 
 
 def save_obsidian_vault_dir(vault_dir: str | None, config_path: Path) -> Config:

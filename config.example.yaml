@@ -23,8 +23,8 @@ paths:
   obsidian_vault_dir: null
 
 models:
-  # Ollama model names — referenced by name only, never called from this
-  # scaffold. Agents A3 (AI pipeline) / A4 (chat) own the actual calls.
+  # Legacy flat model config. Still honoured: any AI task the `ai:` block
+  # below doesn't cover falls back to these (on the `ollama` host).
   chat_model: "llama3.1:8b"
   vision_model: "llava:7b"
   embedding_model: "nomic-embed-text"
@@ -32,6 +32,28 @@ models:
 ollama:
   # Base URL for the Ollama server. Defaults to the standard local install.
   host: "http://localhost:11434"
+
+# Per-task provider/model selection. Omit a task to fall back to `models:`
+# above. Manage this from the Models settings page instead of by hand.
+#
+# ai:
+#   chat:       {provider: anthropic, model: claude-sonnet-5}
+#   categorize: {provider: anthropic, model: claude-haiku-4-5}
+#   vision:     {provider: ollama,    model: minicpm-v}
+#   embedding:  {provider: ollama,    model: bge-m3}   # keep local — changing it
+#                                                      # re-embeds the whole library
+# providers:
+#   anthropic:  {kind: anthropic, api_key_env: ANTHROPIC_API_KEY}
+#   openrouter: {kind: openai, base_url: "https://openrouter.ai/api/v1"}
+#   lmstudio:   {kind: openai, base_url: "http://localhost:1234/v1"}
+#
+# API keys live in `secrets.yaml` beside this file (gitignored, chmod 600),
+# not here:
+#   providers:
+#     anthropic: {api_key: "sk-ant-..."}
+#   auth:
+#     token: "a-long-random-string"   # then every /api/* call needs
+#                                     # Authorization: Bearer <token>
 
 chunking:
   # Text chunking parameters for embeddings (captions, transcripts, notes).
