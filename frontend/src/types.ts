@@ -144,8 +144,29 @@ export interface ImportJobListResponse {
   jobs: ImportJob[]
 }
 
+export type EnrichStepName = 'transcribe' | 'ocr' | 'vision_caption' | 'embed'
+
+export type OcrScope = 'silent_thin_caption' | 'all_silent' | 'all_media' | 'retry_discarded'
+
+export interface EnrichScope {
+  item_ids?: number[] | null
+  category?: string | null
+  only_missing?: boolean
+}
+
+export interface EnrichSteps {
+  transcribe: boolean
+  ocr: boolean
+  vision_caption: boolean
+  embed: boolean
+}
+
 export interface EnrichmentRunRequest {
-  item_ids: number[] | null
+  /** Legacy shape — null means "all pending". Ignored when `scope` is set. */
+  item_ids?: number[] | null
+  scope?: EnrichScope
+  steps?: EnrichSteps
+  ocr_scope?: OcrScope
 }
 
 export interface EnrichmentRunResponse {
@@ -249,12 +270,19 @@ export interface ItemCategoryUpdateRequest {
   category_id: number | null
 }
 
+export interface StepProgress {
+  done: number
+  pending: number
+}
+
 export interface EnrichmentProgress {
   total: number
   pending: number
   running: number
   done: number
   failed: number
+  steps: Record<EnrichStepName, StepProgress>
+  job_id: number | null
 }
 
 export interface ChatSessionCreateRequest {

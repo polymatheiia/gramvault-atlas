@@ -4,6 +4,7 @@ const LINKS = [
   { to: '/', label: 'Gallery', end: true },
   { to: '/chat', label: 'Chat', end: false },
   { to: '/import', label: 'Import', end: false },
+  { to: '/enrich', label: 'Enrich', end: false },
   { to: '/settings', label: 'Settings', end: false },
 ]
 

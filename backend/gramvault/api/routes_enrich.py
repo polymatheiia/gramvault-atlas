@@ -20,6 +20,8 @@ The `/run` body has two shapes:
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -258,20 +260,36 @@ async def get_enrichment_progress(
     )
 
 
-@router.get("/failures", response_model=list[Item])
+class EnrichmentFailure(BaseModel):
+    item_id: int
+    caption: str | None
+    error: str | None
+
+
+@router.get("/failures", response_model=list[EnrichmentFailure])
 async def list_enrichment_failures(
     limit: int = 100,
     config: Config = Depends(get_config_dependency),
-) -> list[Item]:
+) -> list[EnrichmentFailure]:
     """Items whose last enrichment attempt failed, with the error recorded
     in `raw_metadata_json.enrichment_error` — the Enrich page's retry list."""
     with session_scope(config) as conn:
         rows = conn.execute(
-            "SELECT id FROM items WHERE enrichment_status = ? ORDER BY id DESC LIMIT ?",
+            "SELECT id, caption, raw_metadata_json FROM items WHERE enrichment_status = ? "
+            "ORDER BY id DESC LIMIT ?",
             (EnrichmentStatus.FAILED.value, limit),
         ).fetchall()
-        items = fetch_items(conn, [r["id"] for r in rows])
-    return [items[r["id"]] for r in rows if r["id"] in items]
+
+    out: list[EnrichmentFailure] = []
+    for row in rows:
+        error = None
+        if row["raw_metadata_json"]:
+            try:
+                error = json.loads(row["raw_metadata_json"]).get("enrichment_error")
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                error = None
+        out.append(EnrichmentFailure(item_id=row["id"], caption=row["caption"], error=error))
+    return out
 
 
 @router.get("/progress/{item_id}", response_model=Item)

@@ -187,7 +187,11 @@ export function Import() {
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold text-slate-100">Run AI enrichment</h2>
         <p className="text-sm text-slate-400">
-          Generates AI captions/transcripts and embeddings for items that haven&apos;t been enriched yet.
+          Generates AI captions/transcripts and embeddings for items that haven&apos;t been enriched yet.{' '}
+          <Link to="/enrich" className="text-accent no-underline hover:underline">
+            The Enrich page
+          </Link>{' '}
+          has per-pass control (OCR, transcribe-only, by category).
         </p>
         <button type="button" className="btn-primary w-fit" onClick={() => void runEnrichment()} disabled={enrichRunning}>
           {enrichRunning ? 'Enriching…' : 'Run enrichment on pending items'}

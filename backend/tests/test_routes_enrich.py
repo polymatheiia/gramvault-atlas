@@ -456,7 +456,8 @@ class TestPerStepProgress:
             )
 
         body = client.get("/api/enrich/failures").json()
-        assert [it["id"] for it in body] == [failed_id]
+        assert [it["item_id"] for it in body] == [failed_id]
+        assert body[0]["error"] == "boom"
 
 
 class TestItemEnrichmentStatus:

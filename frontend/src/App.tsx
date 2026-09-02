@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { AuthGate } from './components/AuthGate'
 import { NavBar } from './components/NavBar'
 import { Chat } from './pages/Chat'
+import { Enrich } from './pages/Enrich'
 import { Gallery } from './pages/Gallery'
 import { Import } from './pages/Import'
 import { ItemDetail } from './pages/ItemDetail'
@@ -23,6 +24,7 @@ function App() {
               <Route path="/items/:id" element={<ItemDetail />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/import" element={<Import />} />
+              <Route path="/enrich" element={<Enrich />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
