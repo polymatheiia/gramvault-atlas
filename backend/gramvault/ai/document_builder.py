@@ -15,8 +15,13 @@ def build_content_document(item: Item) -> str:
 
     Merges (in a stable, readable order): author, original Instagram
     caption, manual/auto/hashtag tags, then each media file's vision
-    caption and transcript. Blank/missing fields are omitted rather than
-    rendered as empty lines.
+    caption, on-screen text (OCR) and transcript. Blank/missing fields are
+    omitted rather than rendered as empty lines.
+
+    On-screen text is labelled separately from the visual description: it's
+    a verbatim transcription (a recipe, a book title, a punchline) and
+    should be weighted and quoted differently from a model's guess at what
+    a frame depicts.
     """
     lines: list[str] = []
 
@@ -38,6 +43,8 @@ def build_content_document(item: Item) -> str:
         label = f"Media {media_file.sequence_index + 1}" if item.media_files else "Media"
         if media_file.vision_caption:
             lines.append(f"{label} visual description: {media_file.vision_caption.strip()}")
+        if media_file.ocr_text:
+            lines.append(f"{label} on-screen text: {media_file.ocr_text.strip()}")
         if media_file.transcript:
             lines.append(f"{label} transcript: {media_file.transcript.strip()}")
 

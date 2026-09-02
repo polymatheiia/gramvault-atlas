@@ -76,7 +76,7 @@ def ocr_silent_videos(
     ),
     limit: int | None = typer.Option(None, help="Stop after this many videos (for testing)"),
 ) -> None:
-    """Read on-screen text from silent videos into `vision_caption`.
+    """Read on-screen text from silent videos into `media_files.ocr_text`.
 
     A reel with no narration and a hashtag-only caption has no text about
     it anywhere — but it usually has an overlay carrying the whole point of
@@ -85,8 +85,9 @@ def ocr_silent_videos(
 
     Only Latin-script results are kept. Cyrillic transcription from the
     local models is unreliable enough to be worse than nothing (see
-    `gramvault.ai.ocr`), so those are dropped and the item is left for a
-    stronger model.
+    `gramvault.ai.ocr`), so those are dropped — but `ocr_attempted_at` is
+    still stamped so the row isn't retried until a stronger vision model is
+    configured. This is the same OCR pass the Enrich page runs.
     """
     import asyncio
     import re
@@ -111,8 +112,8 @@ def ocr_silent_videos(
             SELECT media_files.id, media_files.file_path, items.id AS item_id, items.caption
             FROM media_files JOIN items ON items.id = media_files.item_id
             WHERE media_files.media_type = 'video'
-              AND media_files.transcript = ''
-              AND media_files.vision_caption IS NULL
+              AND (media_files.transcript = '' OR media_files.transcript IS NULL)
+              AND media_files.ocr_attempted_at IS NULL
             ORDER BY media_files.id
             """
         ).fetchall()
@@ -127,6 +128,7 @@ def ocr_silent_videos(
 
     typer.echo(f"Reading on-screen text from {len(queue)} silent video(s). Resumable.")
     library_dir = config.resolved_library_dir
+    model_id = f"{vision_provider.name}:{vision_model}"
     kept = dropped = unreadable = 0
 
     async def run() -> None:
@@ -152,12 +154,13 @@ def ocr_silent_videos(
                     continue
 
                 text = ocr.clean_output(raw)
-                # Store "" for a rejected read so the item counts as done and
-                # isn't retried on every subsequent run.
+                # Stamp `ocr_attempted_at` even for a rejected read (text is
+                # None) so the row isn't retried on every subsequent run.
                 with session_scope(config) as write_conn:
                     write_conn.execute(
-                        "UPDATE media_files SET vision_caption = ? WHERE id = ?",
-                        (text or "", row["id"]),
+                        "UPDATE media_files SET ocr_text = ?, "
+                        "ocr_attempted_at = datetime('now'), ocr_model = ? WHERE id = ?",
+                        (text, model_id, row["id"]),
                     )
                 if text:
                     kept += 1

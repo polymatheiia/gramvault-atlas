@@ -333,6 +333,105 @@ class TestResumability:
         assert checked_models == {tmp_config.models.embedding_model}
 
 
+class TestProcessItemOcr:
+    @pytest.mark.anyio
+    async def test_ocr_step_writes_ocr_text_and_stamps_attempted(
+        self, tmp_config: Config
+    ) -> None:
+        with session_scope(tmp_config) as conn:
+            item_id = _insert_item(conn, media_type="photo", caption="#recipe #foryou")
+            _insert_media_file(conn, item_id, file_media_type="photo", file_path="slide.jpg")
+
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch(
+                "gramvault.ai.ollama_client.caption_image",
+                new_callable=AsyncMock,
+                return_value="BUY MILK EGGS FLOUR",
+            ) as mock_caption,
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock),
+            patch.object(pipeline.embedding_store, "upsert_item"),
+        ):
+            await pipeline.process_item(
+                item_id,
+                config=tmp_config,
+                steps=pipeline.PipelineSteps(
+                    transcribe=False, ocr=True, vision_caption=False, embed=False
+                ),
+                ocr_scope="all_media",
+            )
+
+        media_file = _get_item(tmp_config, item_id).media_files[0]
+        assert media_file.ocr_text == "BUY MILK EGGS FLOUR"
+        assert media_file.ocr_attempted_at is not None
+        assert media_file.ocr_model
+        mock_caption.assert_awaited_once()
+        # An OCR-only pass over a pending item leaves its status alone.
+        assert _get_item(tmp_config, item_id).enrichment_status == EnrichmentStatus.PENDING
+
+    @pytest.mark.anyio
+    async def test_discarded_ocr_read_still_stamps_attempted_so_it_is_not_retried(
+        self, tmp_config: Config
+    ) -> None:
+        with session_scope(tmp_config) as conn:
+            item_id = _insert_item(conn, media_type="photo", caption="#foryou")
+            _insert_media_file(conn, item_id, file_media_type="photo", file_path="slide.jpg")
+
+        steps = pipeline.PipelineSteps(
+            transcribe=False, ocr=True, vision_caption=False, embed=False
+        )
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch(
+                "gramvault.ai.ollama_client.caption_image",
+                new_callable=AsyncMock,
+                return_value="Купить молоко и яйца",  # Cyrillic -> discarded
+            ) as mock_caption,
+        ):
+            await pipeline.process_item(
+                item_id, config=tmp_config, steps=steps, ocr_scope="all_media"
+            )
+            media_file = _get_item(tmp_config, item_id).media_files[0]
+            assert media_file.ocr_text is None
+            assert media_file.ocr_attempted_at is not None
+
+            # A second identical run must not re-hit the model.
+            await pipeline.process_item(
+                item_id, config=tmp_config, steps=steps, ocr_scope="all_media"
+            )
+        assert mock_caption.await_count == 1
+
+    def test_should_ocr_predicate(self) -> None:
+        from gramvault.models.schemas import Item, MediaFile
+
+        thin = Item(id=1, media_type="video", caption="#foryou #viral")
+        wordy = Item(id=2, media_type="video", caption="Here is the full method, " * 5)
+        fresh_video = MediaFile(id=1, item_id=1, file_path="v.mp4", media_type="video")
+        captioned_video = MediaFile(
+            id=2, item_id=2, file_path="v.mp4", media_type="video", transcript="hello there"
+        )
+        discarded = MediaFile(
+            id=3,
+            item_id=1,
+            file_path="v.mp4",
+            media_type="video",
+            ocr_attempted_at="2026-01-01",
+        )
+        photo = MediaFile(id=4, item_id=1, file_path="p.jpg", media_type="photo")
+
+        assert pipeline._should_ocr(fresh_video, thin, "silent_thin_caption") is True
+        assert pipeline._should_ocr(fresh_video, wordy, "silent_thin_caption") is False
+        assert pipeline._should_ocr(fresh_video, wordy, "all_silent") is True
+        assert pipeline._should_ocr(captioned_video, thin, "all_silent") is False
+        assert pipeline._should_ocr(photo, thin, "all_silent") is False
+        assert pipeline._should_ocr(photo, thin, "all_media") is True
+        assert pipeline._should_ocr(discarded, thin, "all_media") is False
+        assert pipeline._should_ocr(discarded, thin, "retry_discarded") is True
+        assert pipeline._should_ocr(fresh_video, thin, "retry_discarded") is False
+
+
 class TestProcessItemFailureHandling:
     @pytest.mark.anyio
     async def test_ollama_not_running_marks_item_failed_with_error_recorded(
@@ -399,7 +498,7 @@ class TestProcessItems:
         calls: list[int] = []
 
         async def fake_process_item(
-            item_id: int, config: Config | None = None, *, skip_vision: bool = False
+            item_id: int, config: Config | None = None, *, skip_vision: bool = False, **_kw
         ) -> None:
             calls.append(item_id)
 
@@ -415,7 +514,7 @@ class TestProcessItems:
         seen: list[bool] = []
 
         async def fake_process_item(
-            item_id: int, config: Config | None = None, *, skip_vision: bool = False
+            item_id: int, config: Config | None = None, *, skip_vision: bool = False, **_kw
         ) -> None:
             seen.append(skip_vision)
 

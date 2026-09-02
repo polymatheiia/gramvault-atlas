@@ -188,3 +188,60 @@ class TestCategoriesMigration:
             assert conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 14
         finally:
             conn.close()
+
+
+class TestOcrMigration:
+    def test_adds_ocr_and_provenance_columns_to_media_files(
+        self, tmp_config: Config
+    ) -> None:
+        conn = get_connection(tmp_config)
+        try:
+            init_db(conn)
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(media_files)")}
+            assert {
+                "ocr_text",
+                "ocr_attempted_at",
+                "ocr_model",
+                "vision_model",
+                "transcript_model",
+            } <= cols
+        finally:
+            conn.close()
+
+    def test_migration_003_is_rerunnable(self, tmp_config: Config) -> None:
+        conn = get_connection(tmp_config)
+        try:
+            init_db(conn)
+            for _, path in session._discover_migrations():
+                if path.name.startswith("003"):
+                    session._apply_migration(conn, path)  # must not raise
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(media_files)")}
+            assert "ocr_text" in cols
+        finally:
+            conn.close()
+
+    def test_applies_to_a_pre_003_database(self, tmp_path) -> None:
+        from gramvault.db.session import migrate
+
+        conn = get_connection(
+            Config.model_validate({"paths": {"db_path": str(tmp_path / "old.db")}})
+        )
+        try:
+            init_db(conn)
+            # Simulate a DB stamped before 003 by dropping the columns it adds.
+            conn.executescript(
+                "DROP INDEX IF EXISTS idx_media_files_ocr_pending;"
+                "ALTER TABLE media_files DROP COLUMN ocr_text;"
+                "ALTER TABLE media_files DROP COLUMN ocr_attempted_at;"
+                "ALTER TABLE media_files DROP COLUMN ocr_model;"
+                "ALTER TABLE media_files DROP COLUMN vision_model;"
+                "ALTER TABLE media_files DROP COLUMN transcript_model;"
+                "PRAGMA user_version = 2;"
+            )
+            conn.commit()
+            migrate(conn)
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(media_files)")}
+            assert "ocr_attempted_at" in cols
+            assert schema_version(conn) == latest_migration_version()
+        finally:
+            conn.close()

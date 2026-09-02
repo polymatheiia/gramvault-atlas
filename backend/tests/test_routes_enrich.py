@@ -285,7 +285,7 @@ class TestEnrichmentJob:
             ) as mock_process,
         ):
             # Drive the real progress callback so the job row records it.
-            async def fake_process(ids, cfg, *, cancel_check=None, progress_cb=None):
+            async def fake_process(ids, cfg, *, progress_cb=None, **_kwargs):
                 if progress_cb:
                     progress_cb(len(ids), len(ids))
 
@@ -323,13 +323,140 @@ class TestEnrichmentProgress:
         response = client.get("/api/enrich/progress")
 
         assert response.status_code == 200
-        assert response.json() == {
-            "total": 0,
-            "pending": 0,
-            "running": 0,
-            "done": 0,
-            "failed": 0,
-        }
+        body = response.json()
+        assert body["total"] == 0
+        assert body["pending"] == body["running"] == body["done"] == body["failed"] == 0
+        assert body["job_id"] is None
+        assert set(body["steps"]) == {"transcribe", "ocr", "vision_caption", "embed"}
+        assert all(s == {"done": 0, "pending": 0} for s in body["steps"].values())
+
+
+class TestScopedEnrichmentRun:
+    def test_steps_and_ocr_scope_are_forwarded_to_the_pipeline(
+        self, client: TestClient, tmp_config: Config
+    ) -> None:
+        item_id = _seed_item(tmp_config)
+        with session_scope(tmp_config) as conn:
+            conn.execute(
+                "INSERT INTO media_files (item_id, file_path, media_type) VALUES (?, 's.jpg', 'photo')",
+                (item_id,),
+            )
+
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch(
+                "gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock
+            ) as mock_pulled,
+            patch(
+                "gramvault.api.routes_enrich.pipeline.process_items", new_callable=AsyncMock
+            ) as mock_process,
+        ):
+            response = client.post(
+                "/api/enrich/run",
+                json={
+                    "scope": {"item_ids": [item_id], "only_missing": False},
+                    "steps": {
+                        "transcribe": False,
+                        "ocr": True,
+                        "vision_caption": False,
+                        "embed": False,
+                    },
+                    "ocr_scope": "all_media",
+                },
+            )
+
+        assert response.status_code == 202
+        _args, kwargs = mock_process.call_args
+        assert kwargs["steps"].ocr is True
+        assert kwargs["steps"].embed is False
+        assert kwargs["ocr_scope"] == "all_media"
+        # embed step off -> embedding model is never checked; vision is (ocr + media).
+        checked = {c.args[0] for c in mock_pulled.await_args_list}
+        assert "nomic-embed-text" not in checked
+        assert "llava:7b" in checked
+
+    def test_only_missing_skips_already_done_items(
+        self, client: TestClient, tmp_config: Config
+    ) -> None:
+        done_id = _seed_item(tmp_config, enrichment_status="done")
+        pending_id = _seed_item(tmp_config, enrichment_status="pending")
+
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch(
+                "gramvault.api.routes_enrich.pipeline.process_items", new_callable=AsyncMock
+            ) as mock_process,
+        ):
+            response = client.post(
+                "/api/enrich/run",
+                json={"scope": {"only_missing": True}, "steps": {"ocr": False}},
+            )
+
+        assert response.status_code == 202
+        assert response.json()["queued_count"] == 1
+        assert mock_process.call_args.args[0] == [pending_id]
+        assert done_id not in mock_process.call_args.args[0]
+
+    def test_scope_by_category(self, client: TestClient, tmp_config: Config) -> None:
+        in_cat = _seed_item(tmp_config, enrichment_status="pending")
+        _seed_item(tmp_config, enrichment_status="pending")  # different / no category
+        with session_scope(tmp_config) as conn:
+            cat_id = conn.execute(
+                "SELECT id FROM categories WHERE name = 'recipes'"
+            ).fetchone()[0]
+            conn.execute("UPDATE items SET category_id = ? WHERE id = ?", (cat_id, in_cat))
+
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch(
+                "gramvault.api.routes_enrich.pipeline.process_items", new_callable=AsyncMock
+            ) as mock_process,
+        ):
+            response = client.post(
+                "/api/enrich/run",
+                json={"scope": {"category": "recipes", "only_missing": False}},
+            )
+
+        assert response.status_code == 202
+        assert mock_process.call_args.args[0] == [in_cat]
+
+
+class TestPerStepProgress:
+    def test_progress_counts_media_by_pass(
+        self, client: TestClient, tmp_config: Config
+    ) -> None:
+        item_id = _seed_item(tmp_config, enrichment_status="done")
+        with session_scope(tmp_config) as conn:
+            conn.executescript(
+                f"""
+                INSERT INTO media_files (item_id, file_path, media_type, transcript, ocr_attempted_at)
+                  VALUES ({item_id}, 'a.mp4', 'video', 'hello', '2026-01-01');
+                INSERT INTO media_files (item_id, file_path, media_type, transcript, vision_caption)
+                  VALUES ({item_id}, 'b.mp4', 'video', NULL, 'a scene');
+                """
+            )
+
+        body = client.get("/api/enrich/progress").json()
+        assert body["steps"]["transcribe"] == {"done": 1, "pending": 1}
+        assert body["steps"]["ocr"] == {"done": 1, "pending": 1}
+        assert body["steps"]["vision_caption"]["done"] == 1
+        assert body["steps"]["embed"] == {"done": 1, "pending": 0}
+
+    def test_failures_endpoint_lists_failed_items(
+        self, client: TestClient, tmp_config: Config
+    ) -> None:
+        failed_id = _seed_item(tmp_config, enrichment_status="failed")
+        _seed_item(tmp_config, enrichment_status="done")
+        with session_scope(tmp_config) as conn:
+            conn.execute(
+                "UPDATE items SET raw_metadata_json = ? WHERE id = ?",
+                ('{"enrichment_error": "boom"}', failed_id),
+            )
+
+        body = client.get("/api/enrich/failures").json()
+        assert [it["id"] for it in body] == [failed_id]
 
 
 class TestItemEnrichmentStatus:

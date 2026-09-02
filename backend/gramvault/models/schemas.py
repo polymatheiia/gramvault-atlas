@@ -135,6 +135,15 @@ class MediaFile(ORMBase):
     # TODO(A3): populated by the llava vision model.
     vision_caption: str | None = None
     checksum: str | None = None
+    # On-screen text read by `gramvault.ai.ocr` (migration 003). `ocr_text`
+    # is None both before an attempt and after a discarded one — the two are
+    # told apart by `ocr_attempted_at`, which is set either way so the OCR
+    # queue (`ocr_attempted_at IS NULL`) doesn't re-run unreadable frames.
+    ocr_text: str | None = None
+    ocr_attempted_at: str | None = None
+    ocr_model: str | None = None
+    vision_model: str | None = None
+    transcript_model: str | None = None
 
 
 class Item(ORMBase):

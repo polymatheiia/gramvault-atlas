@@ -41,11 +41,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
-from gramvault.ai import document_builder, embedding_store, keyframes, transcription
+from gramvault.ai import document_builder, embedding_store, keyframes, ocr, transcription
 from gramvault.ai.ollama_client import DEFAULT_CAPTION_PROMPT
 from gramvault.ai.providers import get_provider
 from gramvault.chat.retrieval import fetch_items
@@ -54,6 +57,36 @@ from gramvault.db.session import session_scope
 from gramvault.models.schemas import EnrichmentStatus, Item, MediaFile
 
 logger = logging.getLogger(__name__)
+
+
+# --- which steps a run performs --------------------------------------------
+
+
+OcrScope = Literal["silent_thin_caption", "all_silent", "all_media", "retry_discarded"]
+
+
+@dataclass(frozen=True)
+class PipelineSteps:
+    """Toggles for the four independent enrichment passes. The defaults
+    reproduce the historical `enrich` behaviour (caption + transcribe +
+    embed, OCR opt-in) so callers that don't pass `steps` are unaffected."""
+
+    transcribe: bool = True
+    ocr: bool = False
+    vision_caption: bool = True
+    embed: bool = True
+
+
+DEFAULT_STEPS = PipelineSteps()
+
+
+def _caption_substance(caption: str | None) -> int:
+    """Length of a caption once URLs, #hashtags and @mentions are stripped —
+    the same heuristic `gramvault ocr` uses to spot a 'thin' caption whose
+    reel's only real text is the on-screen overlay."""
+    text = re.sub(r"https?://\S+", "", caption or "")
+    text = re.sub(r"[#@]\w+", "", text)
+    return len(re.sub(r"[^\w\s]", "", text).strip())
 
 
 # --- path helpers ------------------------------------------------------------
@@ -83,18 +116,33 @@ def _update_media_file(
     media_file_id: int,
     *,
     vision_caption: str | None = None,
+    vision_model: str | None = None,
     transcript: str | None = None,
+    transcript_model: str | None = None,
 ) -> None:
     if vision_caption is not None:
         conn.execute(
-            "UPDATE media_files SET vision_caption = ? WHERE id = ?",
-            (vision_caption, media_file_id),
+            "UPDATE media_files SET vision_caption = ?, vision_model = ? WHERE id = ?",
+            (vision_caption, vision_model, media_file_id),
         )
     if transcript is not None:
         conn.execute(
-            "UPDATE media_files SET transcript = ? WHERE id = ?",
-            (transcript, media_file_id),
+            "UPDATE media_files SET transcript = ?, transcript_model = ? WHERE id = ?",
+            (transcript, transcript_model, media_file_id),
         )
+
+
+def _record_ocr(
+    conn: sqlite3.Connection, media_file_id: int, text: str | None, model: str
+) -> None:
+    """Write an OCR result. `ocr_attempted_at` is stamped even when `text`
+    is None (a discarded read) so the `ocr_attempted_at IS NULL` queue
+    doesn't keep re-running a frame the model can't read."""
+    conn.execute(
+        "UPDATE media_files SET ocr_text = ?, ocr_attempted_at = datetime('now'), "
+        "ocr_model = ? WHERE id = ?",
+        (text, model, media_file_id),
+    )
 
 
 def _merge_raw_metadata(conn: sqlite3.Connection, item_id: int, updates: dict) -> None:
@@ -163,6 +211,58 @@ async def _transcribe_video(
     return result.text
 
 
+# --- on-screen text (OCR) ----------------------------------------------------
+
+
+def _vision_model_id(config: Config) -> str:
+    """`provider:model` string stored as OCR / caption provenance, so a
+    later 'retry with a stronger model' run knows what produced a result."""
+    provider, model = get_provider("vision", config)
+    return f"{provider.name}:{model}"
+
+
+def _should_ocr(media_file: MediaFile, item: Item, scope: OcrScope) -> bool:
+    """Per-media-file decision for the OCR step, given the requested scope.
+
+    All scopes except `retry_discarded` only touch media that has never been
+    attempted (`ocr_attempted_at IS NULL`); `retry_discarded` is the inverse
+    — media attempted before but discarded (Cyrillic / refusal), for
+    re-running once a better vision model is configured.
+    """
+    if scope == "retry_discarded":
+        return media_file.ocr_attempted_at is not None and not media_file.ocr_text
+    if media_file.ocr_attempted_at is not None:
+        return False
+    if scope == "all_media":
+        return True
+    # all_silent / silent_thin_caption: videos with no speech track.
+    if media_file.media_type != "video" or media_file.transcript:
+        return False
+    if scope == "all_silent":
+        return True
+    return _caption_substance(item.caption) < 40  # silent_thin_caption
+
+
+async def _ocr_media(config: Config, media_file: MediaFile) -> str | None:
+    """Read on-screen text from one media file. Photos (and carousel slides)
+    are read directly; a video is sampled with a single frame ~2 s in. The
+    raw model reply is passed through `ocr.clean_output`, which returns None
+    for an unusable read (Cyrillic, a refusal, a scene description)."""
+    provider, model = get_provider("vision", config)
+    path = _resolve_media_path(config, media_file.file_path)
+    if media_file.media_type == "photo":
+        frame: Path | None = path
+    else:
+        assert media_file.id is not None
+        out_dir = _keyframes_dir(config, media_file.id)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        frame = await asyncio.to_thread(ocr.frame_for_ocr, path, out_dir / "ocr.jpg")
+    if frame is None:
+        return None
+    raw = await provider.caption_image(model, frame, ocr.OCR_PROMPT)
+    return ocr.clean_output(raw)
+
+
 # --- embedding -----------------------------------------------------------------
 
 
@@ -191,24 +291,49 @@ async def _embed_and_upsert(config: Config, item: Item) -> None:
 # --- per-item orchestration ----------------------------------------------------
 
 
+def _resolve_steps(steps: PipelineSteps | None, skip_vision: bool) -> PipelineSteps:
+    """Fold the legacy `skip_vision` flag into a `PipelineSteps`. `steps`
+    wins when given; `skip_vision=True` only ever *removes* the caption
+    pass, never adds one."""
+    resolved = steps or DEFAULT_STEPS
+    if skip_vision and resolved.vision_caption:
+        resolved = PipelineSteps(
+            transcribe=resolved.transcribe,
+            ocr=resolved.ocr,
+            vision_caption=False,
+            embed=resolved.embed,
+        )
+    return resolved
+
+
 async def process_item(
-    item_id: int, config: Config | None = None, *, skip_vision: bool = False
+    item_id: int,
+    config: Config | None = None,
+    *,
+    skip_vision: bool = False,
+    steps: PipelineSteps | None = None,
+    ocr_scope: OcrScope = "silent_thin_caption",
 ) -> None:
-    """Run the full enrichment pipeline for one item, resumably (see
-    module docstring). Never raises — failures are recorded on the item
+    """Run the enrichment pipeline for one item, resumably (see the module
+    docstring). Never raises — failures are recorded on the item
     (`enrichment_status='failed'` + `raw_metadata_json.enrichment_error`)
     rather than propagated, so a batch run continues past one bad item.
 
-    `skip_vision` runs everything except image captioning: transcripts and
-    the original caption/tags still get built into the content document and
-    embedded. Use it when the configured vision model isn't trustworthy for
-    the library at hand — a wrong caption is worse than an absent one once
-    it's embedded, because retrieval can't tell the two apart. Items
-    processed this way still reach `enrichment_status='done'`; re-running
-    later without the flag fills in the captions, since the per-media-file
-    `vision_caption IS NULL` check is what drives that step.
+    `steps` selects which of the four independent passes run (transcribe /
+    ocr / vision_caption / embed); the default runs everything except OCR.
+    Each pass is separately resumable — a populated `transcript` /
+    `vision_caption` / `ocr_attempted_at` is what makes a re-run skip it —
+    so the same item can be OCR'd today and captioned next week.
+
+    `skip_vision` is the legacy spelling of `steps.vision_caption=False`:
+    embed transcripts and the original caption without writing image
+    captions you don't trust (a wrong caption is worse than none once it's
+    embedded). The `enrichment_status` column is only touched when
+    `steps.embed` is on — an OCR-only pass over already-done items leaves
+    their status alone.
     """
     config = config or get_config()
+    steps = _resolve_steps(steps, skip_vision)
 
     with session_scope(config) as conn:
         items = fetch_items(conn, [item_id])
@@ -216,44 +341,70 @@ async def process_item(
         if item is None:
             logger.warning("process_item: item %s not found, skipping", item_id)
             return
-        conn.execute(
-            "UPDATE items SET enrichment_status = ? WHERE id = ?",
-            (EnrichmentStatus.RUNNING.value, item_id),
-        )
+        if steps.embed:
+            conn.execute(
+                "UPDATE items SET enrichment_status = ? WHERE id = ?",
+                (EnrichmentStatus.RUNNING.value, item_id),
+            )
 
     try:
-        embed_provider, embed_model = get_provider("embedding", config)
-        await embed_provider.ensure_ready(embed_model)
-        needs_vision = not skip_vision and any(
+        if steps.embed:
+            embed_provider, embed_model = get_provider("embedding", config)
+            await embed_provider.ensure_ready(embed_model)
+
+        needs_caption = steps.vision_caption and any(
             not mf.vision_caption for mf in item.media_files
         )
-        if needs_vision:
+        needs_ocr = steps.ocr and any(
+            _should_ocr(mf, item, ocr_scope) for mf in item.media_files
+        )
+        vision_model_id: str | None = None
+        if needs_caption or needs_ocr:
             vision_provider, vision_model = get_provider("vision", config)
             await vision_provider.ensure_ready(vision_model)
+            vision_model_id = f"{vision_provider.name}:{vision_model}"
 
         for media_file in item.media_files:
-            if media_file.media_type == "photo":
-                if not media_file.vision_caption and not skip_vision:
-                    caption = await _caption_photo(config, media_file)
-                    with session_scope(config) as conn:
-                        _update_media_file(conn, media_file.id, vision_caption=caption)
-                    media_file.vision_caption = caption
-            else:  # "video"
-                if not media_file.vision_caption and not skip_vision:
-                    caption = await _caption_video(config, media_file)
-                    with session_scope(config) as conn:
-                        _update_media_file(conn, media_file.id, vision_caption=caption)
-                    media_file.vision_caption = caption
-                if media_file.transcript is None:
-                    transcript = await _transcribe_video(config, media_file, item.caption)
-                    with session_scope(config) as conn:
-                        _update_media_file(conn, media_file.id, transcript=transcript)
-                    media_file.transcript = transcript
+            if steps.vision_caption and not media_file.vision_caption:
+                caption = (
+                    await _caption_photo(config, media_file)
+                    if media_file.media_type == "photo"
+                    else await _caption_video(config, media_file)
+                )
+                with session_scope(config) as conn:
+                    _update_media_file(
+                        conn,
+                        media_file.id,
+                        vision_caption=caption,
+                        vision_model=vision_model_id,
+                    )
+                media_file.vision_caption = caption
 
-        await _embed_and_upsert(config, item)
+            if steps.ocr and _should_ocr(media_file, item, ocr_scope):
+                text = await _ocr_media(config, media_file)
+                with session_scope(config) as conn:
+                    _record_ocr(conn, media_file.id, text, vision_model_id or "")
+                media_file.ocr_text = text
 
-        with session_scope(config) as conn:
-            _set_item_status(conn, item_id, EnrichmentStatus.DONE)
+            if (
+                steps.transcribe
+                and media_file.media_type == "video"
+                and media_file.transcript is None
+            ):
+                transcript = await _transcribe_video(config, media_file, item.caption)
+                with session_scope(config) as conn:
+                    _update_media_file(
+                        conn,
+                        media_file.id,
+                        transcript=transcript,
+                        transcript_model=transcription._whisper_model_size(),
+                    )
+                media_file.transcript = transcript
+
+        if steps.embed:
+            await _embed_and_upsert(config, item)
+            with session_scope(config) as conn:
+                _set_item_status(conn, item_id, EnrichmentStatus.DONE)
 
     except Exception as exc:  # noqa: BLE001 - broad on purpose: any failure marks the item failed
         logger.exception("Enrichment failed for item %s", item_id)
@@ -266,6 +417,8 @@ async def process_items(
     config: Config | None = None,
     *,
     skip_vision: bool = False,
+    steps: PipelineSteps | None = None,
+    ocr_scope: OcrScope = "silent_thin_caption",
     cancel_check: Callable[[], bool] | None = None,
     progress_cb: Callable[[int, int], None] | None = None,
 ) -> None:
@@ -282,7 +435,9 @@ async def process_items(
         if cancel_check is not None and cancel_check():
             logger.info("process_items: cancellation requested, stopping after %d/%d", index, total)
             break
-        await process_item(item_id, config, skip_vision=skip_vision)
+        await process_item(
+            item_id, config, skip_vision=skip_vision, steps=steps, ocr_scope=ocr_scope
+        )
         if progress_cb is not None:
             progress_cb(index + 1, total)
 
@@ -299,6 +454,82 @@ def resolve_target_item_ids(conn: sqlite3.Connection, item_ids: list[int] | None
         "SELECT id FROM items WHERE enrichment_status = ?", (EnrichmentStatus.PENDING.value,)
     ).fetchall()
     return [row["id"] for row in rows]
+
+
+_OCR_PENDING_PREDICATE: dict[str, str] = {
+    "retry_discarded": "m.ocr_attempted_at IS NOT NULL AND m.ocr_text IS NULL",
+    "all_media": "m.ocr_attempted_at IS NULL",
+    "all_silent": (
+        "m.ocr_attempted_at IS NULL AND m.media_type = 'video' "
+        "AND (m.transcript IS NULL OR m.transcript = '')"
+    ),
+    # caption thinness is judged in Python (`_should_ocr`); the SQL side
+    # approximates it with the silent-video predicate — an over-broad
+    # `only_missing` set just means the pipeline no-ops a few items.
+    "silent_thin_caption": (
+        "m.ocr_attempted_at IS NULL AND m.media_type = 'video' "
+        "AND (m.transcript IS NULL OR m.transcript = '')"
+    ),
+}
+
+
+def resolve_enrich_targets(
+    conn: sqlite3.Connection,
+    *,
+    item_ids: list[int] | None = None,
+    category: str | None = None,
+    only_missing: bool = True,
+    steps: PipelineSteps = DEFAULT_STEPS,
+    ocr_scope: OcrScope = "silent_thin_caption",
+) -> list[int]:
+    """Resolve a scoped `/run` request into a concrete item-id list.
+
+    Scope: explicit `item_ids`, else every item in `category` (by name),
+    else the whole library. `only_missing` then keeps just the items that
+    still have outstanding work for at least one of the selected `steps`.
+    """
+    if item_ids is not None:
+        candidates = list(item_ids)
+    elif category is not None:
+        rows = conn.execute(
+            "SELECT i.id FROM items i JOIN categories c ON c.id = i.category_id "
+            "WHERE c.name = ?",
+            (category,),
+        ).fetchall()
+        candidates = [r["id"] for r in rows]
+    else:
+        candidates = [r["id"] for r in conn.execute("SELECT id FROM items")]
+
+    if not candidates or not only_missing:
+        return candidates
+
+    placeholders = ",".join("?" for _ in candidates)
+    ocr_pred = _OCR_PENDING_PREDICATE[ocr_scope]
+    clauses: list[str] = []
+    if steps.embed:
+        clauses.append(f"i.enrichment_status != '{EnrichmentStatus.DONE.value}'")
+    if steps.transcribe:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM media_files m WHERE m.item_id = i.id "
+            "AND m.media_type = 'video' AND m.transcript IS NULL)"
+        )
+    if steps.vision_caption:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM media_files m WHERE m.item_id = i.id "
+            "AND (m.vision_caption IS NULL OR m.vision_caption = ''))"
+        )
+    if steps.ocr:
+        clauses.append(
+            f"EXISTS (SELECT 1 FROM media_files m WHERE m.item_id = i.id AND ({ocr_pred}))"
+        )
+    if not clauses:
+        return []
+    rows = conn.execute(
+        f"SELECT i.id FROM items i WHERE i.id IN ({placeholders}) "
+        f"AND ({' OR '.join(clauses)})",
+        candidates,
+    ).fetchall()
+    return [r["id"] for r in rows]
 
 
 def mark_items_pending(conn: sqlite3.Connection, item_ids: list[int]) -> None:

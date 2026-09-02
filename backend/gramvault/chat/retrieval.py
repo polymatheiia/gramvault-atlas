@@ -41,6 +41,7 @@ _FIELD_WEIGHTS = {
     "tag_names": 0.25,
     "vision_captions": 0.2,
     "transcripts": 0.2,
+    "ocr_texts": 0.25,
     "username": 0.15,
     "full_name": 0.1,
 }
@@ -101,6 +102,7 @@ def keyword_search(conn: sqlite3.Connection, query: str, limit: int = 20) -> lis
             a.full_name AS full_name,
             GROUP_CONCAT(DISTINCT mf.transcript) AS transcripts,
             GROUP_CONCAT(DISTINCT mf.vision_caption) AS vision_captions,
+            GROUP_CONCAT(DISTINCT mf.ocr_text) AS ocr_texts,
             GROUP_CONCAT(DISTINCT t.name) AS tag_names
         FROM items i
         LEFT JOIN authors a ON a.id = i.author_id
@@ -114,6 +116,7 @@ def keyword_search(conn: sqlite3.Connection, query: str, limit: int = 20) -> lis
             OR (a.full_name LIKE :pat)
             OR (transcripts LIKE :pat)
             OR (vision_captions LIKE :pat)
+            OR (ocr_texts LIKE :pat)
             OR (tag_names LIKE :pat)
         LIMIT :limit
         """,
