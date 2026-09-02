@@ -45,7 +45,9 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from gramvault.ai import document_builder, embedding_store, keyframes, ollama_client, transcription
+from gramvault.ai import document_builder, embedding_store, keyframes, transcription
+from gramvault.ai.ollama_client import DEFAULT_CAPTION_PROMPT
+from gramvault.ai.providers import get_provider
 from gramvault.chat.retrieval import fetch_items
 from gramvault.config import Config, get_config
 from gramvault.db.session import session_scope
@@ -132,7 +134,8 @@ def _set_item_status(
 
 async def _caption_photo(config: Config, media_file: MediaFile) -> str:
     path = _resolve_media_path(config, media_file.file_path)
-    return await ollama_client.caption_image(path, model=config.models.vision_model, config=config)
+    provider, model = get_provider("vision", config)
+    return await provider.caption_image(model, path, DEFAULT_CAPTION_PROMPT)
 
 
 async def _caption_video(config: Config, media_file: MediaFile) -> str:
@@ -142,11 +145,10 @@ async def _caption_video(config: Config, media_file: MediaFile) -> str:
     frames = await asyncio.to_thread(keyframes.extract_keyframes, path, out_dir, config)
     if not frames:
         return ""
+    provider, model = get_provider("vision", config)
     captions: list[str] = []
     for frame in frames:
-        caption = await ollama_client.caption_image(
-            frame, model=config.models.vision_model, config=config
-        )
+        caption = await provider.caption_image(model, frame, DEFAULT_CAPTION_PROMPT)
         if caption:
             captions.append(caption.strip())
     return " | ".join(captions)
@@ -171,10 +173,9 @@ async def _embed_and_upsert(config: Config, item: Item) -> None:
     chunks = document_builder.chunk_text(
         document, config.chunking.chunk_size, config.chunking.chunk_overlap
     )
+    provider, model = get_provider("embedding", config)
     for index, chunk in enumerate(chunks):
-        embedding = await ollama_client.embed(
-            chunk, model=config.models.embedding_model, config=config
-        )
+        embedding = await provider.embed(model, chunk)
         await asyncio.to_thread(
             embedding_store.upsert_item,
             item.id,
@@ -221,13 +222,14 @@ async def process_item(
         )
 
     try:
-        await ollama_client.ensure_running(config)
+        embed_provider, embed_model = get_provider("embedding", config)
+        await embed_provider.ensure_ready(embed_model)
         needs_vision = not skip_vision and any(
             not mf.vision_caption for mf in item.media_files
         )
         if needs_vision:
-            await ollama_client.ensure_model_pulled(config.models.vision_model, config)
-        await ollama_client.ensure_model_pulled(config.models.embedding_model, config)
+            vision_provider, vision_model = get_provider("vision", config)
+            await vision_provider.ensure_ready(vision_model)
 
         for media_file in item.media_files:
             if media_file.media_type == "photo":

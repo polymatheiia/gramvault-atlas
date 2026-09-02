@@ -79,18 +79,15 @@ class TestProcessItemPhoto:
             _insert_media_file(conn, item_id, file_media_type="photo", file_path="a.jpg")
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock),
-            patch.object(
-                pipeline.ollama_client,
-                "caption_image",
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.caption_image",
                 new_callable=AsyncMock,
                 return_value="a nice photo",
             ) as mock_caption,
             patch.object(pipeline.keyframes, "extract_keyframes") as mock_extract,
             patch.object(pipeline.transcription, "transcribe") as mock_transcribe,
-            patch.object(
-                pipeline.ollama_client, "embed", new_callable=AsyncMock, return_value=[0.1, 0.2]
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock, return_value=[0.1, 0.2]
             ) as mock_embed,
             patch.object(pipeline.embedding_store, "upsert_item") as mock_upsert,
         ):
@@ -113,10 +110,9 @@ class TestProcessItemPhoto:
             item_id = _insert_item(conn, media_type="photo", caption=None)
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock),
-            patch.object(
-                pipeline.ollama_client, "embed", new_callable=AsyncMock
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock
             ) as mock_embed,
             patch.object(pipeline.embedding_store, "upsert_item") as mock_upsert,
         ):
@@ -141,22 +137,19 @@ class TestProcessItemVideo:
         fake_transcript = TranscriptionResult(text="someone talking about pasta")
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
             patch.object(
                 pipeline.keyframes, "extract_keyframes", return_value=fake_frames
             ) as mock_extract,
-            patch.object(
-                pipeline.ollama_client,
-                "caption_image",
+            patch("gramvault.ai.ollama_client.caption_image",
                 new_callable=AsyncMock,
                 side_effect=["frame one caption", "frame two caption"],
             ) as mock_caption,
             patch.object(
                 pipeline.transcription, "transcribe", return_value=fake_transcript
             ) as mock_transcribe,
-            patch.object(
-                pipeline.ollama_client, "embed", new_callable=AsyncMock, return_value=[0.1]
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock, return_value=[0.1]
             ),
             patch.object(pipeline.embedding_store, "upsert_item") as mock_upsert,
         ):
@@ -183,14 +176,13 @@ class TestProcessItemVideo:
         fake_transcript = TranscriptionResult(text="")
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
             patch.object(pipeline.keyframes, "extract_keyframes", return_value=[]),
-            patch.object(
-                pipeline.ollama_client, "caption_image", new_callable=AsyncMock
+            patch("gramvault.ai.ollama_client.caption_image", new_callable=AsyncMock
             ) as mock_caption,
             patch.object(pipeline.transcription, "transcribe", return_value=fake_transcript),
-            patch.object(pipeline.ollama_client, "embed", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock),
             patch.object(pipeline.embedding_store, "upsert_item"),
         ):
             await pipeline.process_item(item_id, config=tmp_config)
@@ -210,21 +202,18 @@ class TestProcessItemVideo:
             _insert_media_file(conn, item_id, file_media_type="video", file_path="clip.mp4")
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(
-                pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock
             ) as mock_pull,
             patch.object(pipeline.keyframes, "extract_keyframes") as mock_extract,
-            patch.object(
-                pipeline.ollama_client, "caption_image", new_callable=AsyncMock
+            patch("gramvault.ai.ollama_client.caption_image", new_callable=AsyncMock
             ) as mock_caption,
             patch.object(
                 pipeline.transcription,
                 "transcribe",
                 return_value=TranscriptionResult(text="a recipe for chili lime chicken"),
             ) as mock_transcribe,
-            patch.object(
-                pipeline.ollama_client, "embed", new_callable=AsyncMock, return_value=[0.1]
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock, return_value=[0.1]
             ),
             patch.object(pipeline.embedding_store, "upsert_item") as mock_upsert,
         ):
@@ -262,16 +251,15 @@ class TestResumability:
         fake_transcript = TranscriptionResult(text="new transcript")
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
             patch.object(pipeline.keyframes, "extract_keyframes") as mock_extract,
-            patch.object(
-                pipeline.ollama_client, "caption_image", new_callable=AsyncMock
+            patch("gramvault.ai.ollama_client.caption_image", new_callable=AsyncMock
             ) as mock_caption,
             patch.object(
                 pipeline.transcription, "transcribe", return_value=fake_transcript
             ) as mock_transcribe,
-            patch.object(pipeline.ollama_client, "embed", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock),
             patch.object(pipeline.embedding_store, "upsert_item"),
         ):
             await pipeline.process_item(item_id, config=tmp_config)
@@ -300,12 +288,11 @@ class TestResumability:
             )
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock),
-            patch.object(
-                pipeline.ollama_client, "caption_image", new_callable=AsyncMock
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.caption_image", new_callable=AsyncMock
             ) as mock_caption,
-            patch.object(pipeline.ollama_client, "embed", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock),
             patch.object(pipeline.embedding_store, "upsert_item"),
         ):
             await pipeline.process_item(item_id, config=tmp_config)
@@ -333,12 +320,11 @@ class TestResumability:
             )
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(
-                pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock
             ) as mock_ensure_pulled,
-            patch.object(pipeline.ollama_client, "caption_image", new_callable=AsyncMock),
-            patch.object(pipeline.ollama_client, "embed", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.caption_image", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock),
             patch.object(pipeline.embedding_store, "upsert_item"),
         ):
             await pipeline.process_item(item_id, config=tmp_config)
@@ -356,9 +342,7 @@ class TestProcessItemFailureHandling:
             item_id = _insert_item(conn, media_type="photo")
             _insert_media_file(conn, item_id, file_media_type="photo", file_path="a.jpg")
 
-        with patch.object(
-            pipeline.ollama_client,
-            "ensure_running",
+        with patch("gramvault.ai.ollama_client.ensure_running",
             new_callable=AsyncMock,
             side_effect=OllamaNotRunningError("http://localhost:11434"),
         ):
@@ -385,15 +369,13 @@ class TestProcessItemFailureHandling:
             )
 
         with (
-            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
-            patch.object(pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock),
-            patch.object(
-                pipeline.ollama_client,
-                "caption_image",
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.caption_image",
                 new_callable=AsyncMock,
                 return_value="a caption",
             ),
-            patch.object(pipeline.ollama_client, "embed", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock),
             patch.object(pipeline.embedding_store, "upsert_item"),
         ):
             await pipeline.process_item(item_id, config=tmp_config)

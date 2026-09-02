@@ -25,7 +25,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
-from gramvault.ai import embedding_store, ollama_client
+from gramvault.ai import embedding_store
+from gramvault.ai.providers import get_provider
 from gramvault.config import Config, get_config
 from gramvault.models.schemas import Author, Item, MediaFile, Tag
 
@@ -56,9 +57,10 @@ class RetrievalResult:
 
 async def embed_query(query: str, config: Config | None = None) -> list[float]:
     """Embed the user's free-text query with the configured embedding
-    model. Propagates `OllamaNotRunningError`/`ModelNotPulledError`."""
+    provider/model. Propagates `ProviderNotReadyError`."""
     config = config or get_config()
-    return await ollama_client.embed(query, model=config.models.embedding_model, config=config)
+    provider, model = get_provider("embedding", config)
+    return await provider.embed(model, query)
 
 
 def vector_search(
@@ -204,9 +206,11 @@ def fetch_items(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, Item
         f"""
         SELECT i.*, a.id AS author_id_, a.username AS author_username,
                a.full_name AS author_full_name, a.profile_url AS author_profile_url,
-               a.avatar_path AS author_avatar_path, a.created_at AS author_created_at
+               a.avatar_path AS author_avatar_path, a.created_at AS author_created_at,
+               c.name AS category_name
         FROM items i
         LEFT JOIN authors a ON a.id = i.author_id
+        LEFT JOIN categories c ON c.id = i.category_id
         WHERE i.id IN ({placeholders})
         """,
         item_ids,
@@ -235,6 +239,10 @@ def fetch_items(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, Item
             imported_at=row["imported_at"],
             import_job_id=row["import_job_id"],
             enrichment_status=row["enrichment_status"],
+            category_id=row["category_id"],
+            category=row["category_name"],
+            category_source=row["category_source"],
+            category_confidence=row["category_confidence"],
             tags=[],
             media_files=[],
         )

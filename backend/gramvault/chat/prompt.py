@@ -107,7 +107,7 @@ def build_messages(
     results: list[RetrievalResult],
     user_message: str,
 ) -> list[dict[str, str]]:
-    """Build the full `messages` list for `ollama_client.stream_chat()`:
+    """Build the full `messages` list for a provider's `stream_chat()`:
     system instruction, prior turns (`history`, oldest first, each a
     `{"role", "content"}` dict), then a final user turn that bundles the
     retrieved-item context with the new user message.

@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from gramvault.ai.ollama_client import ModelNotPulledError, OllamaNotRunningError
+from gramvault.ai.errors import ProviderNotReadyError
 from gramvault.api.deps import get_config_dependency
 from gramvault.chat import service
 from gramvault.config import Config
@@ -44,9 +44,9 @@ class SemanticSearchResponse(BaseModel):
     results: list[SemanticSearchResult]
 
 
-def _as_http_error(exc: OllamaNotRunningError | ModelNotPulledError) -> HTTPException:
-    """Translate an Ollama readiness failure into a clean 503 with an
-    actionable message, instead of letting it bubble up as a raw 500."""
+def _as_http_error(exc: ProviderNotReadyError) -> HTTPException:
+    """Translate an AI-provider readiness failure into a clean 503 with
+    an actionable message, instead of letting it bubble up as a raw 500."""
     return HTTPException(status_code=503, detail=str(exc))
 
 
@@ -114,7 +114,7 @@ async def send_chat_message(
     # after the client has already committed to a streaming connection.
     try:
         await service.ensure_ollama_ready(config)
-    except (OllamaNotRunningError, ModelNotPulledError) as exc:
+    except ProviderNotReadyError as exc:
         raise _as_http_error(exc) from exc
 
     return EventSourceResponse(service.stream_message(session_id, body.content, config=config))
@@ -134,7 +134,7 @@ async def semantic_search(
     """
     try:
         raw_results = await service.semantic_search(q, top_k=top_k, config=config)
-    except (OllamaNotRunningError, ModelNotPulledError) as exc:
+    except ProviderNotReadyError as exc:
         raise _as_http_error(exc) from exc
 
     return SemanticSearchResponse(

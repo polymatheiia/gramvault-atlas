@@ -171,7 +171,7 @@ class TestHybridSearch:
             QueryResult(item_id=other_id, media_file_id=None, score=0.7, snippet=None, metadata={}),
         ]
         with (
-            patch.object(retrieval.ollama_client, "embed", new_callable=AsyncMock) as mock_embed,
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock) as mock_embed,
             patch.object(retrieval.embedding_store, "query", return_value=fake_vector_results),
         ):
             mock_embed.return_value = [0.1, 0.2, 0.3]

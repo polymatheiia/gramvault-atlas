@@ -95,17 +95,34 @@ class TestEnsureOllamaReady:
     @pytest.mark.anyio
     async def test_checks_running_and_both_models(self, tmp_config: Config) -> None:
         with (
-            patch.object(service.ollama_client, "ensure_running", new_callable=AsyncMock) as mock_running,
-            patch.object(
-                service.ollama_client, "ensure_model_pulled", new_callable=AsyncMock
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock) as mock_running,
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock
             ) as mock_pulled,
         ):
             await service.ensure_ollama_ready(tmp_config)
 
-        mock_running.assert_awaited_once()
-        assert mock_pulled.await_count == 2
+        # Each provider checks readiness independently: the server-up check
+        # runs once per provider, the model-pull check once per model.
+        mock_running.assert_awaited()
         checked_models = {call.args[0] for call in mock_pulled.await_args_list}
         assert checked_models == {tmp_config.models.chat_model, tmp_config.models.embedding_model}
+
+    @pytest.mark.anyio
+    async def test_api_chat_provider_gates_on_the_key_not_ollama(self) -> None:
+        from gramvault.ai.errors import ProviderNotReadyError
+        from gramvault.config import Config
+
+        cfg = Config.model_validate(
+            {
+                "ai": {"chat": {"provider": "anthropic", "model": "claude-sonnet-5"}},
+                "providers": {"anthropic": {"kind": "anthropic"}},  # no api_key
+            }
+        )
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            pytest.raises(ProviderNotReadyError, match="Anthropic API key"),
+        ):
+            await service.ensure_ollama_ready(cfg)
 
 
 class TestStreamMessage:
@@ -132,7 +149,7 @@ class TestStreamMessage:
                 service.retrieval, "hybrid_search", new_callable=AsyncMock
             ) as mock_hybrid,
             patch.object(service.retrieval, "fetch_items", return_value={1: item}),
-            patch.object(service.ollama_client, "stream_chat", new=_fake_stream_chat),
+            patch("gramvault.ai.ollama_client.stream_chat", new=_fake_stream_chat),
         ):
             mock_hybrid.return_value = [fake_result]
 
@@ -176,7 +193,7 @@ class TestStreamMessage:
         with (
             patch.object(service.retrieval, "hybrid_search", new_callable=AsyncMock, return_value=[]),
             patch.object(service.retrieval, "fetch_items", return_value={}),
-            patch.object(service.ollama_client, "stream_chat", new=_raising_stream_chat),
+            patch("gramvault.ai.ollama_client.stream_chat", new=_raising_stream_chat),
         ):
             events = [
                 event

@@ -40,11 +40,11 @@ class TestRunEnrichment:
 
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
             ),
             patch(
@@ -68,11 +68,11 @@ class TestRunEnrichment:
 
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
             ),
             patch(
@@ -93,11 +93,11 @@ class TestRunEnrichment:
 
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
             ),
             patch("gramvault.api.routes_enrich.pipeline.process_items", new_callable=AsyncMock),
@@ -115,11 +115,11 @@ class TestRunEnrichment:
     ) -> None:
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
             ),
             patch(
@@ -136,7 +136,7 @@ class TestRunEnrichment:
         self, client: TestClient
     ) -> None:
         with patch(
-            "gramvault.api.routes_enrich.ollama_client.ensure_running",
+            "gramvault.ai.ollama_client.ensure_running",
             new_callable=AsyncMock,
             side_effect=OllamaNotRunningError("http://localhost:11434"),
         ):
@@ -150,11 +150,11 @@ class TestRunEnrichment:
     def test_model_not_pulled_is_503_with_friendly_message(self, client: TestClient) -> None:
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
                 side_effect=ModelNotPulledError("llava:7b"),
             ),
@@ -173,7 +173,7 @@ class TestRunEnrichment:
 
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
                 side_effect=OllamaNotRunningError("http://localhost:11434"),
             ),
@@ -196,11 +196,11 @@ class TestRunEnrichment:
 
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
             ) as mock_pulled,
             patch("gramvault.api.routes_enrich.pipeline.process_items", new_callable=AsyncMock),
@@ -223,11 +223,11 @@ class TestRunEnrichment:
 
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
             ) as mock_pulled,
             patch("gramvault.api.routes_enrich.pipeline.process_items", new_callable=AsyncMock),
@@ -250,11 +250,11 @@ class TestEnrichmentJob:
 
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
             ),
             patch(
@@ -273,11 +273,11 @@ class TestEnrichmentJob:
 
         with (
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                "gramvault.ai.ollama_client.ensure_running",
                 new_callable=AsyncMock,
             ),
             patch(
-                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                "gramvault.ai.ollama_client.ensure_model_pulled",
                 new_callable=AsyncMock,
             ),
             patch(

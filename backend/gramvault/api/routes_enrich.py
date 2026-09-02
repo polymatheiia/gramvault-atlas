@@ -7,7 +7,7 @@ and exposing progress so the frontend can poll a progress bar.
 
 The actual pipeline logic lives in `gramvault.ai.pipeline` — this module is
 just the HTTP surface: resolving the request into a target item id list,
-scheduling background processing, and translating `gramvault.ai.ollama_client`'s
+scheduling background processing, and translating the AI providers'
 friendly exceptions into clean HTTP responses instead of raw stack traces.
 """
 
@@ -16,7 +16,9 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
-from gramvault.ai import ollama_client, pipeline
+from gramvault.ai import pipeline
+from gramvault.ai.errors import ProviderNotReadyError
+from gramvault.ai.providers import get_provider
 from gramvault.api import jobs
 from gramvault.api.deps import get_config_dependency
 from gramvault.chat.retrieval import fetch_items
@@ -80,11 +82,12 @@ async def run_enrichment(
             needs_vision = row["count"] > 0
 
     try:
-        await ollama_client.ensure_running(config)
+        embed_provider, embed_model = get_provider("embedding", config)
+        await embed_provider.ensure_ready(embed_model)
         if needs_vision:
-            await ollama_client.ensure_model_pulled(config.models.vision_model, config)
-        await ollama_client.ensure_model_pulled(config.models.embedding_model, config)
-    except (ollama_client.OllamaNotRunningError, ollama_client.ModelNotPulledError) as exc:
+            vision_provider, vision_model = get_provider("vision", config)
+            await vision_provider.ensure_ready(vision_model)
+    except ProviderNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     if not item_ids:

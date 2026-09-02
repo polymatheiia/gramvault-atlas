@@ -15,7 +15,8 @@ import sqlite3
 from collections.abc import AsyncIterator
 from typing import Any
 
-from gramvault.ai import ollama_client
+from gramvault.ai.errors import ProviderNotReadyError
+from gramvault.ai.providers import get_provider
 from gramvault.chat import prompt, retrieval
 from gramvault.config import Config, get_config
 from gramvault.db.session import get_connection, init_db
@@ -117,14 +118,19 @@ def parse_citations(text: str, valid_item_ids: set[int]) -> list[int]:
 
 
 async def ensure_ollama_ready(config: Config | None = None) -> None:
-    """Raise `OllamaNotRunningError`/`ModelNotPulledError` if the chat or
-    embedding model isn't ready. Call this BEFORE opening a streaming
+    """Raise `ProviderNotReadyError` if the chat or embedding
+    provider/model isn't ready. Call this BEFORE opening a streaming
     response, so the failure surfaces as a normal HTTP error rather than
-    an SSE event after headers are already sent."""
+    an SSE event after headers are already sent.
+
+    (Name kept for backwards compatibility with `routes_chat` / tests —
+    it now covers whichever providers the `chat` and `embedding` tasks
+    resolve to, Ollama or otherwise.)"""
     config = config or get_config()
-    await ollama_client.ensure_running(config)
-    await ollama_client.ensure_model_pulled(config.models.chat_model, config)
-    await ollama_client.ensure_model_pulled(config.models.embedding_model, config)
+    chat_provider, chat_model = get_provider("chat", config)
+    embed_provider, embed_model = get_provider("embedding", config)
+    await chat_provider.ensure_ready(chat_model)
+    await embed_provider.ensure_ready(embed_model)
 
 
 # --- the main RAG chat flow --------------------------------------------------
@@ -165,10 +171,9 @@ async def stream_message(
 
         messages = prompt.build_messages(history, items, results, user_content)
 
+        chat_provider, chat_model = get_provider("chat", config)
         full_text = ""
-        async for chunk in ollama_client.stream_chat(
-            messages, model=config.models.chat_model, config=config
-        ):
+        async for chunk in chat_provider.stream_chat(chat_model, messages):
             full_text += chunk
             yield {"event": "token", "data": json.dumps({"content": chunk})}
 
@@ -206,7 +211,7 @@ async def stream_message(
                 }
             ),
         }
-    except (ollama_client.OllamaNotRunningError, ollama_client.ModelNotPulledError) as exc:
+    except ProviderNotReadyError as exc:
         yield {"event": "error", "data": json.dumps({"detail": str(exc)})}
     finally:
         conn.close()

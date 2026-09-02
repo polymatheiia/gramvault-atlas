@@ -93,10 +93,12 @@ def ocr_silent_videos(
     import tempfile
     from pathlib import Path as _Path
 
-    from gramvault.ai import ocr, ollama_client
+    from gramvault.ai import ocr
+    from gramvault.ai.providers import get_provider
     from gramvault.db.session import session_scope
 
     config = get_config()
+    vision_provider, vision_model = get_provider("vision", config)
 
     def substance(caption: str | None) -> int:
         text = re.sub(r"https?://\S+", "", caption or "")
@@ -129,8 +131,7 @@ def ocr_silent_videos(
 
     async def run() -> None:
         nonlocal kept, dropped, unreadable
-        await ollama_client.ensure_running(config)
-        await ollama_client.ensure_model_pulled(config.models.vision_model, config)
+        await vision_provider.ensure_ready(vision_model)
         with tempfile.TemporaryDirectory() as tmp:
             for index, row in enumerate(queue, start=1):
                 video = _Path(row["file_path"])
@@ -142,9 +143,8 @@ def ocr_silent_videos(
                     typer.echo(f"[{index}/{len(queue)}] no frame from {video.name}")
                     continue
                 try:
-                    raw = await ollama_client.caption_image(
-                        frame, prompt=ocr.OCR_PROMPT, model=config.models.vision_model,
-                        config=config,
+                    raw = await vision_provider.caption_image(
+                        vision_model, frame, ocr.OCR_PROMPT
                     )
                 except Exception as exc:  # noqa: BLE001 — one bad frame mustn't end the run
                     unreadable += 1
