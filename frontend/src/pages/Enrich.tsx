@@ -8,6 +8,7 @@ import type {
   EnrichmentRunResponse,
   EnrichSteps,
   EnrichStepName,
+  Job,
   ModelsOverview,
   OcrScope,
 } from '../types'
@@ -121,6 +122,16 @@ export function Enrich() {
       if (p && p.job_id == null) {
         setBusy(false)
         refreshFailures()
+        // The job just ended — surface its outcome if it failed or was cancelled.
+        try {
+          const jobs = await api.get<Job[]>('/api/jobs', { kind: 'enrich', limit: 1 })
+          const last = jobs[0]
+          if (last && (last.status === 'failed' || last.status === 'cancelled')) {
+            setError(last.error_message || `Enrichment ${last.status}.`)
+          }
+        } catch {
+          /* non-fatal */
+        }
       }
     }, 2000)
     return () => {

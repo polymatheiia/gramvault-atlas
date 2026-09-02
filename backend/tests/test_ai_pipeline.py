@@ -403,6 +403,52 @@ class TestProcessItemOcr:
             )
         assert mock_caption.await_count == 1
 
+    @pytest.mark.anyio
+    async def test_ocr_only_failure_leaves_item_status_untouched(
+        self, tmp_config: Config
+    ) -> None:
+        with session_scope(tmp_config) as conn:
+            item_id = _insert_item(conn, media_type="photo", caption="#foryou")
+            conn.execute(
+                "UPDATE items SET enrichment_status = 'done' WHERE id = ?", (item_id,)
+            )
+            _insert_media_file(conn, item_id, file_media_type="photo", file_path="s.jpg")
+
+        steps = pipeline.PipelineSteps(
+            transcribe=False, ocr=True, vision_caption=False, embed=False
+        )
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch(
+                "gramvault.ai.ollama_client.caption_image",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("boom"),
+            ),
+            pytest.raises(pipeline._ItemStepError),
+        ):
+            await pipeline.process_item(
+                item_id, config=tmp_config, steps=steps, ocr_scope="all_media"
+            )
+
+        item = _get_item(tmp_config, item_id)
+        assert item.enrichment_status == EnrichmentStatus.DONE  # not flipped to failed
+
+    @pytest.mark.anyio
+    async def test_process_items_aborts_after_consecutive_step_failures(
+        self, tmp_config: Config, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(pipeline, "_MAX_CONSECUTIVE_FAILURES", 2)
+
+        async def always_fails(item_id, config=None, **_kw):
+            raise pipeline._ItemStepError(item_id)
+
+        with (
+            patch.object(pipeline, "process_item", new=always_fails),
+            pytest.raises(RuntimeError, match="aborting batch"),
+        ):
+            await pipeline.process_items([1, 2, 3, 4], config=tmp_config)
+
     def test_should_ocr_predicate(self) -> None:
         from gramvault.models.schemas import Item, MediaFile
 

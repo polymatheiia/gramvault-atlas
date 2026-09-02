@@ -80,6 +80,24 @@ class PipelineSteps:
 DEFAULT_STEPS = PipelineSteps()
 
 
+class _ItemStepError(Exception):
+    """Raised by `process_item` when a non-embed pass (OCR / transcribe /
+    caption without embed) fails. The item's `enrichment_status` is
+    deliberately left untouched — the un-stamped `ocr_attempted_at` / null
+    `transcript` already makes the next run retry just the media that
+    didn't get processed. `process_items` counts these and aborts the
+    batch after a run of them, treating a repeated failure as systemic
+    (Ollama unreachable) rather than one bad file."""
+
+    def __init__(self, item_id: int) -> None:
+        super().__init__(f"step failed for item {item_id}")
+        self.item_id = item_id
+
+
+# Consecutive non-embed failures before `process_items` gives up on the batch.
+_MAX_CONSECUTIVE_FAILURES = 5
+
+
 def _caption_substance(caption: str | None) -> int:
     """Length of a caption once URLs, #hashtags and @mentions are stripped —
     the same heuristic `gramvault ocr` uses to spot a 'thin' caption whose
@@ -406,10 +424,19 @@ async def process_item(
             with session_scope(config) as conn:
                 _set_item_status(conn, item_id, EnrichmentStatus.DONE)
 
-    except Exception as exc:  # noqa: BLE001 - broad on purpose: any failure marks the item failed
+    except Exception as exc:  # noqa: BLE001 - broad on purpose: one bad item mustn't end the batch
         logger.exception("Enrichment failed for item %s", item_id)
-        with session_scope(config) as conn:
-            _set_item_status(conn, item_id, EnrichmentStatus.FAILED, error=str(exc))
+        # Only the embed pass "owns" `enrichment_status`. An OCR- or
+        # transcribe-only run that trips over a transient error (Ollama
+        # briefly unreachable while a model loads) must not flip a
+        # previously-`done` item to `failed` — the un-stamped
+        # `ocr_attempted_at` / null `transcript` already makes the next
+        # run retry exactly the media that didn't get processed.
+        if steps.embed:
+            with session_scope(config) as conn:
+                _set_item_status(conn, item_id, EnrichmentStatus.FAILED, error=str(exc))
+        else:
+            raise _ItemStepError(item_id) from exc
 
 
 async def process_items(
@@ -431,13 +458,24 @@ async def process_items(
     """
     config = config or get_config()
     total = len(item_ids)
+    consecutive_failures = 0
     for index, item_id in enumerate(item_ids):
         if cancel_check is not None and cancel_check():
             logger.info("process_items: cancellation requested, stopping after %d/%d", index, total)
             break
-        await process_item(
-            item_id, config, skip_vision=skip_vision, steps=steps, ocr_scope=ocr_scope
-        )
+        try:
+            await process_item(
+                item_id, config, skip_vision=skip_vision, steps=steps, ocr_scope=ocr_scope
+            )
+            consecutive_failures = 0
+        except _ItemStepError as exc:
+            consecutive_failures += 1
+            logger.warning("process_items: %s (%d in a row)", exc, consecutive_failures)
+            if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                raise RuntimeError(
+                    f"aborting batch: {consecutive_failures} items failed in a row "
+                    f"(last: {exc}) — is the AI provider reachable?"
+                ) from exc
         if progress_cb is not None:
             progress_cb(index + 1, total)
 
