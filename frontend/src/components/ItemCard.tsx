@@ -48,8 +48,13 @@ export function ItemCard({ item }: { item: Item }) {
         <Thumbnail item={item} />
       </div>
       <div className="flex flex-1 flex-col gap-1.5 p-3">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-1.5">
           <span className={`badge ${TYPE_BADGE_STYLES[item.media_type]}`}>{item.media_type}</span>
+          {item.category && (
+            <span className="badge bg-surface-overlay text-slate-400" title={`Category: ${item.category}`}>
+              {item.category}
+            </span>
+          )}
           {item.media_files.length > 1 && (
             <span className="text-xs text-slate-500">{item.media_files.length} files</span>
           )}

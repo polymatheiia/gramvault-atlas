@@ -2,16 +2,26 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api, isNotImplemented } from '../api/client'
 import { ItemCard } from '../components/ItemCard'
-import type { Author, Item, ItemListResponse, MediaType, SemanticSearchResponse, Tag } from '../types'
+import type {
+  Author,
+  CategoryListResponse,
+  Item,
+  ItemListResponse,
+  MediaType,
+  SemanticSearchResponse,
+  Tag,
+} from '../types'
 
 const MEDIA_TYPES: MediaType[] = ['photo', 'video', 'reel', 'carousel']
 const PAGE_SIZE = 48
+const UNCATEGORIZED = '__uncategorized__'
 
 export function Gallery() {
   const [searchParams, setSearchParams] = useSearchParams()
   const author = searchParams.get('author') ?? ''
   const mediaType = (searchParams.get('media_type') as MediaType | null) ?? ''
   const tag = searchParams.get('tag') ?? ''
+  const category = searchParams.get('category') ?? ''
   const dateFrom = searchParams.get('date_from') ?? ''
   const dateTo = searchParams.get('date_to') ?? ''
   const search = searchParams.get('search') ?? ''
@@ -20,6 +30,7 @@ export function Gallery() {
   const [searchInput, setSearchInput] = useState(search)
   const [authors, setAuthors] = useState<Author[]>([])
   const [tags, setTags] = useState<Tag[]>([])
+  const [categoryData, setCategoryData] = useState<CategoryListResponse | null>(null)
 
   const [items, setItems] = useState<Item[]>([])
   const [total, setTotal] = useState(0)
@@ -36,6 +47,10 @@ export function Gallery() {
       .get<Tag[]>('/api/library/tags')
       .then(setTags)
       .catch(() => setTags([]))
+    api
+      .get<CategoryListResponse>('/api/library/categories')
+      .then(setCategoryData)
+      .catch(() => setCategoryData(null))
   }, [])
 
   // Keep the search box in sync when navigation changes the URL directly.
@@ -67,12 +82,17 @@ export function Gallery() {
         if (search) {
           const res = await api.get<SemanticSearchResponse>(
             '/api/chat/search',
-            { q: search, top_k: 60 },
+            { q: search, top_k: 90 },
             controller.signal,
           )
-          setItems(res.results.map((r) => r.item))
-          setTotal(res.results.length)
-          setSearchScores(new Map(res.results.map((r) => [r.item.id ?? -1, { score: r.score, snippet: r.snippet }])))
+          // Semantic search has no server-side facets; apply the category
+          // filter client-side so it still narrows results while searching.
+          let results = res.results
+          if (category === UNCATEGORIZED) results = results.filter((r) => r.item.category === null)
+          else if (category) results = results.filter((r) => r.item.category === category)
+          setItems(results.map((r) => r.item))
+          setTotal(results.length)
+          setSearchScores(new Map(results.map((r) => [r.item.id ?? -1, { score: r.score, snippet: r.snippet }])))
         } else {
           const res = await api.get<ItemListResponse>(
             '/api/library/items',
@@ -80,6 +100,7 @@ export function Gallery() {
               author: author || undefined,
               media_type: mediaType || undefined,
               tag: tag || undefined,
+              category: category || undefined,
               date_from: dateFrom || undefined,
               date_to: dateTo || undefined,
               page,
@@ -104,7 +125,7 @@ export function Gallery() {
 
     void load()
     return () => controller.abort()
-  }, [author, mediaType, tag, dateFrom, dateTo, search, page])
+  }, [author, mediaType, tag, category, dateFrom, dateTo, search, page])
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total])
 
@@ -126,6 +147,8 @@ export function Gallery() {
     })
   }
 
+  const hasFilters = !!(author || mediaType || tag || category || dateFrom || dateTo || search)
+
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6">
       <div className="flex flex-col gap-3">
@@ -136,6 +159,21 @@ export function Gallery() {
           onChange={(e) => setSearchInput(e.target.value)}
         />
         <div className="flex flex-wrap gap-2">
+          <select
+            className="input w-auto"
+            value={category}
+            onChange={(e) => updateFilter('category', e.target.value)}
+          >
+            <option value="">All categories</option>
+            {categoryData?.categories.map((c) => (
+              <option key={c.id ?? c.name} value={c.name}>
+                {c.name} ({c.count})
+              </option>
+            ))}
+            {categoryData && categoryData.uncategorized_count > 0 && (
+              <option value={UNCATEGORIZED}>Uncategorized ({categoryData.uncategorized_count})</option>
+            )}
+          </select>
           <select
             className="input w-auto"
             value={mediaType}
@@ -190,7 +228,7 @@ export function Gallery() {
             onChange={(e) => updateFilter('date_to', e.target.value)}
             disabled={!!search}
           />
-          {(author || mediaType || tag || dateFrom || dateTo || search) && (
+          {hasFilters && (
             <button type="button" className="btn-ghost" onClick={() => setSearchParams({})}>
               Clear filters
             </button>

@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, isNotFound, mediaUrl } from '../api/client'
 import { TagBadge } from '../components/TagBadge'
-import type { Item, MediaFile } from '../types'
+import type { CategoryListResponse, CategoryWithCount, Item, MediaFile } from '../types'
 
 const ENRICHMENT_LABEL: Record<Item['enrichment_status'], string> = {
   pending: 'Enrichment pending',
@@ -53,6 +53,16 @@ export function ItemDetail() {
   const [tagInput, setTagInput] = useState('')
   const [savingTags, setSavingTags] = useState(false)
 
+  const [categories, setCategories] = useState<CategoryWithCount[]>([])
+  const [savingCategory, setSavingCategory] = useState(false)
+
+  useEffect(() => {
+    api
+      .get<CategoryListResponse>('/api/library/categories')
+      .then((r) => setCategories(r.categories))
+      .catch(() => setCategories([]))
+  }, [])
+
   useEffect(() => {
     if (!id) return
     const controller = new AbortController()
@@ -100,6 +110,19 @@ export function ItemDetail() {
     void saveTags(manual)
   }
 
+  async function saveCategory(categoryId: number | null) {
+    if (!id) return
+    setSavingCategory(true)
+    try {
+      const updated = await api.patch<Item>(`/api/library/items/${id}`, { category_id: categoryId })
+      setItem(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update category')
+    } finally {
+      setSavingCategory(false)
+    }
+  }
+
   if (loading) return <p className="px-4 py-6 text-sm text-slate-500">Loading…</p>
   if (error) return <p className="mx-auto max-w-3xl px-4 py-6 text-sm text-red-300">{error}</p>
   if (!item) return null
@@ -135,6 +158,26 @@ export function ItemDetail() {
         </div>
 
         {item.caption && <p className="whitespace-pre-wrap text-sm text-slate-100">{item.caption}</p>}
+
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="label">Category</span>
+          <select
+            className="input w-auto"
+            value={item.category_id ?? ''}
+            disabled={savingCategory}
+            onChange={(e) => void saveCategory(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">— none —</option>
+            {categories.map((c) => (
+              <option key={c.id ?? c.name} value={c.id ?? ''}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          {item.category_source && item.category_source !== 'manual' && (
+            <span className="text-xs text-slate-500">auto ({item.category_source})</span>
+          )}
+        </div>
 
         <div className="flex items-center justify-between text-sm text-slate-400">
           <span>

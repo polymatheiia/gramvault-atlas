@@ -12,12 +12,17 @@ export type MediaType = 'photo' | 'video' | 'reel' | 'carousel'
  * several photo/video MediaFile rows). */
 export type FileMediaType = 'photo' | 'video'
 
-/** Shared status enum for long-running jobs (import, export). */
-export type JobStatus = 'pending' | 'running' | 'done' | 'failed'
+/** Shared status enum for long-running jobs (import, export, jobs table). */
+export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
+
+/** Kinds of background job tracked in the `jobs` table (Pipeline UI). */
+export type JobKind = 'enrich' | 'categorize' | 'digest' | 'pull' | 'model_pull' | 'reembed'
 
 export type EnrichmentStatus = 'pending' | 'running' | 'done' | 'failed'
 
 export type TagKind = 'auto' | 'manual' | 'hashtag'
+
+export type CategorySource = 'keyword' | 'llm' | 'manual'
 
 export type ChatRole = 'user' | 'assistant' | 'system'
 
@@ -34,6 +39,18 @@ export interface Tag {
   id: number | null
   name: string
   kind: TagKind
+}
+
+export interface Category {
+  id: number | null
+  name: string
+  sort_order: number
+  color: string | null
+  description: string | null
+}
+
+export interface CategoryWithCount extends Category {
+  count: number
 }
 
 export interface MediaFile {
@@ -63,6 +80,11 @@ export interface Item {
   imported_at: string | null
   import_job_id: number | null
   enrichment_status: EnrichmentStatus
+  category_id: number | null
+  /** Resolved category name, for display. */
+  category: string | null
+  category_source: CategorySource | null
+  category_confidence: number | null
   tags: Tag[]
   media_files: MediaFile[]
 }
@@ -128,6 +150,34 @@ export interface EnrichmentRunRequest {
 
 export interface EnrichmentRunResponse {
   queued_count: number
+  /** The `jobs` row tracking this run — poll GET /api/jobs/{job_id}. */
+  job_id: number | null
+}
+
+export interface Job {
+  id: number | null
+  kind: JobKind
+  status: JobStatus
+  params: Record<string, unknown> | null
+  progress: Record<string, unknown> | null
+  result: Record<string, unknown> | null
+  error_message: string | null
+  cancel_requested: boolean
+  started_at: string | null
+  finished_at: string | null
+  created_at: string | null
+}
+
+// --- categories (GET/POST/PATCH/DELETE /api/library/categories) ---
+
+export interface CategoryListResponse {
+  categories: CategoryWithCount[]
+  uncategorized_count: number
+  total: number
+}
+
+export interface ItemCategoryUpdateRequest {
+  category_id: number | null
 }
 
 export interface EnrichmentProgress {
@@ -197,6 +247,8 @@ export interface LibraryItemFilters {
   author?: string
   media_type?: MediaType
   tag?: string
+  /** Category name, or '__uncategorized__' for items with no category. */
+  category?: string
   q?: string
   date_from?: string
   date_to?: string
