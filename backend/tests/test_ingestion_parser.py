@@ -219,3 +219,179 @@ def test_parse_export_own_post_with_missing_media_keeps_metadata(tmp_path: Path)
     assert len(parsed.own_posts) == 1
     assert parsed.own_posts[0].media_files[0].zip_member_name is None
     assert any("missing" in w.lower() or "media" in w.lower() for w in parsed.warnings)
+
+
+# --- the newer `label_values` saved-posts shape ---------------------------
+
+
+def _label_values_entry(
+    url: str,
+    *,
+    caption: str = "",
+    username: str = "chef_alice",
+    full_name: str = "",
+    hashtags: tuple[str, ...] = (),
+    timestamp: int = 1700000000,
+) -> dict:
+    """One saved-posts entry in the shape newer exports use: a flat list
+    of label/value records plus nested `dict` groups."""
+    return {
+        "timestamp": timestamp,
+        "media": [],
+        "fbid": "18071163821445383",
+        "label_values": [
+            {"label": "URL", "value": url, "href": url},
+            {"label": "Caption", "value": caption},
+            {"label": "Title", "value": ""},
+            {
+                "title": "Hashtags",
+                "dict": [
+                    {"title": "", "dict": [{"label": "Name", "value": tag}]}
+                    for tag in hashtags
+                ],
+            },
+            {
+                "title": "Owner",
+                "dict": [
+                    {
+                        "title": "",
+                        "dict": [
+                            {"label": "URL", "value": ""},
+                            {"label": "Name", "value": full_name},
+                            {"label": "Username", "value": username},
+                        ],
+                    }
+                ],
+            },
+            {"title": "Brand partner", "dict": []},
+        ],
+    }
+
+
+def test_parse_export_label_values_shape(tmp_path: Path) -> None:
+    entries = [
+        _label_values_entry(
+            "https://www.instagram.com/reel/Da2_CrNoI9n/",
+            caption="a real caption",
+            username="chef_alice",
+            full_name="Alice",
+            hashtags=("food", "recipe"),
+        )
+    ]
+    zip_path = _write_zip(
+        tmp_path,
+        "export.zip",
+        {"your_instagram_activity/saved/saved_posts.json": json.dumps(entries)},
+    )
+
+    parsed = parse_export(zip_path)
+
+    assert len(parsed.saved_items) == 1
+    item = parsed.saved_items[0]
+    assert item.external_id == "Da2_CrNoI9n"
+    assert item.instagram_url == "https://www.instagram.com/reel/Da2_CrNoI9n/"
+    assert item.media_type_guess == MediaType.REEL
+    assert item.author_username == "chef_alice"
+    assert item.author_full_name == "Alice"
+    assert item.caption == "a real caption"
+    assert item.hashtags == ["food", "recipe"]
+    assert item.saved_at is not None
+
+
+def _as_mojibake(text: str) -> str:
+    """Reproduce the export's double-encoding exactly: UTF-8 bytes read
+    back as Latin-1. Expressed as a round-trip rather than a literal
+    because the damaged form contains unprintable bytes — U+2022 becomes
+    'â\\x80¢', not the 'â¢' it looks like in a terminal."""
+    return text.encode("utf-8").decode("latin-1")
+
+
+def test_parse_export_label_values_repairs_mojibake(tmp_path: Path) -> None:
+    """These exports write UTF-8 bytes that were decoded as Latin-1, so
+    "które" arrives as "ktÃ³re"."""
+    entries = [
+        _label_values_entry(
+            "https://www.instagram.com/p/ABC123abc/",
+            caption=_as_mojibake("produkty, które polecam"),
+            full_name=_as_mojibake("Monika • content creator"),
+            hashtags=(_as_mojibake("książki"),),
+        )
+    ]
+    zip_path = _write_zip(
+        tmp_path,
+        "export.zip",
+        {"your_instagram_activity/saved/saved_posts.json": json.dumps(entries)},
+    )
+
+    item = parse_export(zip_path).saved_items[0]
+
+    assert item.caption == "produkty, które polecam"
+    assert item.author_full_name == "Monika • content creator"
+    assert item.hashtags == ["książki"]
+
+
+def test_parse_export_label_values_leaves_clean_text_alone(tmp_path: Path) -> None:
+    """Text that isn't mojibake must survive the repair untouched."""
+    entries = [
+        _label_values_entry(
+            "https://www.instagram.com/p/ABC123abc/", caption="café and naïve — fine"
+        )
+    ]
+    zip_path = _write_zip(
+        tmp_path,
+        "export.zip",
+        {"your_instagram_activity/saved/saved_posts.json": json.dumps(entries)},
+    )
+
+    assert parse_export(zip_path).saved_items[0].caption == "café and naïve — fine"
+
+
+def test_parse_export_label_values_missing_optional_groups(tmp_path: Path) -> None:
+    """Entries without Owner/Hashtags/Caption still parse — only the URL
+    is load-bearing."""
+    entries = [
+        {
+            "timestamp": 1700000000,
+            "label_values": [
+                {"label": "URL", "value": "https://www.instagram.com/p/ABC123abc/"}
+            ],
+        }
+    ]
+    zip_path = _write_zip(
+        tmp_path,
+        "export.zip",
+        {"your_instagram_activity/saved/saved_posts.json": json.dumps(entries)},
+    )
+
+    item = parse_export(zip_path).saved_items[0]
+
+    assert item.external_id == "ABC123abc"
+    assert item.author_username is None
+    assert item.caption is None
+    assert item.hashtags == []
+
+
+def test_parse_export_handles_both_shapes_in_one_file(tmp_path: Path) -> None:
+    """Shape is chosen per entry, so a transitional export mixing both
+    still imports completely."""
+    entries = [
+        {
+            "title": "traveler_bob",
+            "string_list_data": [
+                {"href": "https://www.instagram.com/p/OLD123abcd/", "timestamp": 1700000000}
+            ],
+        },
+        _label_values_entry("https://www.instagram.com/reel/NEW123abcd/", caption="new"),
+    ]
+    zip_path = _write_zip(
+        tmp_path,
+        "export.zip",
+        {"your_instagram_activity/saved/saved_posts.json": json.dumps(entries)},
+    )
+
+    parsed = parse_export(zip_path)
+
+    assert [i.external_id for i in parsed.saved_items] == ["OLD123abcd", "NEW123abcd"]
+    assert parsed.saved_items[0].author_username == "traveler_bob"
+    assert parsed.saved_items[0].caption is None
+    assert parsed.saved_items[1].caption == "new"

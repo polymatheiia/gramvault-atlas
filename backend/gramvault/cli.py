@@ -13,7 +13,7 @@ import typer
 
 from gramvault.config import get_config
 from gramvault.db.session import get_connection, init_db
-from gramvault.ingestion import import_zip
+from gramvault.ingestion import import_zip, link_local_media
 from gramvault.models.schemas import JobStatus
 
 app = typer.Typer(
@@ -67,6 +67,260 @@ def import_export(
         f"{job.processed_items}/{job.total_items} items processed "
         f"({job.failed_items} failed)."
     )
+
+
+@app.command(name="ocr")
+def ocr_silent_videos(
+    all_silent: bool = typer.Option(
+        False, "--all-silent", help="Every silent video, not only those with a thin caption"
+    ),
+    limit: int | None = typer.Option(None, help="Stop after this many videos (for testing)"),
+) -> None:
+    """Read on-screen text from silent videos into `vision_caption`.
+
+    A reel with no narration and a hashtag-only caption has no text about
+    it anywhere — but it usually has an overlay carrying the whole point of
+    the post. By default this targets exactly those items; `--all-silent`
+    widens it to every video without a transcript.
+
+    Only Latin-script results are kept. Cyrillic transcription from the
+    local models is unreliable enough to be worse than nothing (see
+    `gramvault.ai.ocr`), so those are dropped and the item is left for a
+    stronger model.
+    """
+    import asyncio
+    import re
+    import tempfile
+    from pathlib import Path as _Path
+
+    from gramvault.ai import ocr, ollama_client
+    from gramvault.db.session import session_scope
+
+    config = get_config()
+
+    def substance(caption: str | None) -> int:
+        text = re.sub(r"https?://\S+", "", caption or "")
+        text = re.sub(r"[#@]\w+", "", text)
+        return len(re.sub(r"[^\w\s]", "", text).strip())
+
+    with session_scope(config) as conn:
+        rows = conn.execute(
+            """
+            SELECT media_files.id, media_files.file_path, items.id AS item_id, items.caption
+            FROM media_files JOIN items ON items.id = media_files.item_id
+            WHERE media_files.media_type = 'video'
+              AND media_files.transcript = ''
+              AND media_files.vision_caption IS NULL
+            ORDER BY media_files.id
+            """
+        ).fetchall()
+    queue = [dict(r) for r in rows]
+    if not all_silent:
+        queue = [r for r in queue if substance(r["caption"]) < 40]
+    queue = queue[: limit or None]
+
+    if not queue:
+        typer.echo("Nothing to do — every silent video already has a vision_caption.")
+        return
+
+    typer.echo(f"Reading on-screen text from {len(queue)} silent video(s). Resumable.")
+    library_dir = config.resolved_library_dir
+    kept = dropped = unreadable = 0
+
+    async def run() -> None:
+        nonlocal kept, dropped, unreadable
+        await ollama_client.ensure_running(config)
+        await ollama_client.ensure_model_pulled(config.models.vision_model, config)
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, row in enumerate(queue, start=1):
+                video = _Path(row["file_path"])
+                if not video.is_absolute():
+                    video = library_dir / video
+                frame = ocr.frame_for_ocr(video, _Path(tmp) / "frame.jpg")
+                if frame is None:
+                    unreadable += 1
+                    typer.echo(f"[{index}/{len(queue)}] no frame from {video.name}")
+                    continue
+                try:
+                    raw = await ollama_client.caption_image(
+                        frame, prompt=ocr.OCR_PROMPT, model=config.models.vision_model,
+                        config=config,
+                    )
+                except Exception as exc:  # noqa: BLE001 — one bad frame mustn't end the run
+                    unreadable += 1
+                    typer.echo(f"[{index}/{len(queue)}] failed: {exc}")
+                    continue
+
+                text = ocr.clean_output(raw)
+                # Store "" for a rejected read so the item counts as done and
+                # isn't retried on every subsequent run.
+                with session_scope(config) as write_conn:
+                    write_conn.execute(
+                        "UPDATE media_files SET vision_caption = ? WHERE id = ?",
+                        (text or "", row["id"]),
+                    )
+                if text:
+                    kept += 1
+                    typer.echo(f"[{index}/{len(queue)}] {text[:70]}")
+                else:
+                    dropped += 1
+                    typer.echo(f"[{index}/{len(queue)}] discarded (no text / Cyrillic)")
+
+    asyncio.run(run())
+    typer.echo(
+        f"\nDone. {kept} with usable text, {dropped} discarded, {unreadable} unreadable.\n"
+        "Re-run `gramvault enrich --skip-vision` to embed the new text."
+    )
+
+
+@app.command(name="enrich")
+def enrich_items(
+    skip_vision: bool = typer.Option(
+        False, "--skip-vision", help="Skip image captioning; still transcribe and embed"
+    ),
+    retry_failed: bool = typer.Option(
+        False, "--retry-failed", help="Re-queue items previously marked failed"
+    ),
+    limit: int | None = typer.Option(None, help="Stop after this many items (for testing)"),
+) -> None:
+    """Run AI enrichment over pending items and embed them for search.
+
+    `--skip-vision` is the useful mode when the local vision model isn't
+    good enough for your library: transcripts, captions and tags still get
+    built into the content document and embedded, so chat and search work,
+    without writing image captions you don't trust. Running again later
+    without the flag fills the captions in.
+    """
+    import asyncio
+
+    from gramvault.ai import pipeline
+    from gramvault.db.session import session_scope
+    from gramvault.models.schemas import EnrichmentStatus
+
+    config = get_config()
+    with session_scope(config) as conn:
+        if retry_failed:
+            requeued = conn.execute(
+                "UPDATE items SET enrichment_status = ? WHERE enrichment_status = ?",
+                (EnrichmentStatus.PENDING.value, EnrichmentStatus.FAILED.value),
+            ).rowcount
+            if requeued:
+                typer.echo(f"Re-queued {requeued} previously failed item(s).")
+        item_ids = pipeline.resolve_target_item_ids(conn, None)
+
+    item_ids = item_ids[: limit or None]
+    if not item_ids:
+        typer.echo("Nothing pending. Use --retry-failed to re-queue failed items.")
+        return
+
+    typer.echo(
+        f"Enriching {len(item_ids)} item(s)"
+        + (" (vision skipped)" if skip_vision else "")
+        + ". Needs Ollama running for embeddings. Safe to interrupt and resume."
+    )
+    asyncio.run(pipeline.process_items(item_ids, config, skip_vision=skip_vision))
+
+    with session_scope(config) as conn:
+        rows = conn.execute(
+            "SELECT enrichment_status, COUNT(*) AS n FROM items GROUP BY enrichment_status"
+        ).fetchall()
+    typer.echo("\nDone. " + ", ".join(f"{r['n']} {r['enrichment_status']}" for r in rows))
+
+
+@app.command(name="transcribe")
+def transcribe_media(
+    limit: int | None = typer.Option(None, help="Stop after this many files (for testing)"),
+) -> None:
+    """Transcribe every video that doesn't have a transcript yet.
+
+    Split out from `enrich` so the audio pass — which is accurate and
+    needs no network — can run on its own, without waiting on the vision
+    model. Resumable: the queue is just `transcript IS NULL`, so a killed
+    run picks up where it stopped.
+    """
+    from gramvault.ai import transcription
+    from gramvault.db.session import session_scope
+
+    config = get_config()
+    with session_scope(config) as conn:
+        rows = conn.execute(
+            """
+            SELECT media_files.id, media_files.file_path, items.caption
+            FROM media_files JOIN items ON items.id = media_files.item_id
+            WHERE media_files.media_type = 'video' AND media_files.transcript IS NULL
+            ORDER BY media_files.id
+            """
+        ).fetchall()
+    queue = [dict(row) for row in rows][: limit or None]
+
+    if not queue:
+        typer.echo("Nothing to transcribe — every video already has a transcript.")
+        return
+
+    typer.echo(f"Transcribing {len(queue)} video(s) with Whisper "
+               f"'{transcription._whisper_model_size()}'. Safe to interrupt and resume.")
+
+    library_dir = config.resolved_library_dir
+    with_speech = silent = failed = 0
+    for index, row in enumerate(queue, start=1):
+        path = Path(row["file_path"])
+        if not path.is_absolute():
+            path = library_dir / path
+        try:
+            result = transcription.transcribe(path, transcription.language_hint(row["caption"]))
+        except Exception as exc:  # noqa: BLE001 — one bad file must not end the run
+            failed += 1
+            typer.echo(f"[{index}/{len(queue)}] failed {path.name}: {exc}")
+            continue
+
+        # Store "" rather than leaving NULL for a music-only reel, so it
+        # counts as done and the next run doesn't retry it forever.
+        with session_scope(config) as conn:
+            conn.execute(
+                "UPDATE media_files SET transcript = ? WHERE id = ?", (result.text, row["id"])
+            )
+        if result.text:
+            with_speech += 1
+            typer.echo(f"[{index}/{len(queue)}] {result.language or '??'}: {result.text[:70]}")
+        else:
+            silent += 1
+            typer.echo(f"[{index}/{len(queue)}] no speech")
+
+    typer.echo(f"\nDone. {with_speech} transcribed, {silent} music-only/silent, {failed} failed.")
+
+
+@app.command(name="link-media")
+def link_media(
+    source_dir: Path = typer.Argument(
+        ..., help="Directory of downloaded media whose filenames contain the shortcode"
+    ),
+    copy: bool = typer.Option(
+        False, "--copy", help="Copy files into the library instead of hardlinking them"
+    ),
+) -> None:
+    """Attach separately downloaded media to imported saved items.
+
+    Instagram's export contains no media for other people's posts, so
+    saved reels import as link-only metadata. Point this at a directory
+    downloaded with instaloader (or anything else whose filenames carry
+    the post shortcode) and the files are matched to those items by
+    shortcode and brought into the library.
+    """
+    config = get_config()
+    try:
+        report = link_local_media(source_dir, config, copy=copy)
+    except NotADirectoryError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(report.summary())
+    if report.unmatched_examples:
+        typer.echo(
+            "Files matched no imported item, e.g.: "
+            + ", ".join(report.unmatched_examples)
+            + "\nImport the matching export first, or check that filenames contain "
+            "the post shortcode."
+        )
 
 
 @app.command(name="init-db")

@@ -188,6 +188,16 @@ GramVault only reads Instagram's official data export — it never logs into you
 
 **Why can't I see other people's saved photos/videos?** This is expected, not a bug. Instagram's official data export only includes the actual media *bytes* for your own posts. For posts you've saved from other accounts, the export contains link and metadata only (author, caption if available, timestamp, and a URL) — Instagram doesn't bundle a copy of someone else's media into your download. GramVault imports these as **link-only** items: you'll see the metadata and a link back to the original post, but no local media file, because Instagram never gave GramVault one to work with.
 
+**Can I fill in the media for those saved posts?** Yes, if you download it yourself. Point `gramvault link-media <dir>` at a directory of downloaded media and it attaches each file to the item it belongs to, matching on the Instagram shortcode in the filename:
+
+```bash
+gramvault link-media ~/instagram
+```
+
+Any filename containing the shortcode works; [instaloader](https://instaloader.github.io/) produces them directly with `--filename-pattern={date_utc}_UTC_{shortcode}`. Files are hardlinked into the library by default, so a large download directory costs no extra disk (pass `--copy` for independent copies). Re-running is safe and cheap — items that already have media are skipped without re-hashing. Once linked, saved reels play in the Gallery and take part in AI enrichment and chat like any other item.
+
+Downloading someone else's media is between you and Instagram's terms of service; GramVault only files what's already on your disk.
+
 ## Privacy
 
 - **100% local.** Your library, database, vector store, and media files live entirely on your own disk.

@@ -151,9 +151,12 @@ async def _caption_video(config: Config, media_file: MediaFile) -> str:
     return " | ".join(captions)
 
 
-async def _transcribe_video(config: Config, media_file: MediaFile) -> str:
+async def _transcribe_video(
+    config: Config, media_file: MediaFile, caption: str | None = None
+) -> str:
     path = _resolve_media_path(config, media_file.file_path)
-    result = await asyncio.to_thread(transcription.transcribe, path)
+    hint = transcription.language_hint(caption)
+    result = await asyncio.to_thread(transcription.transcribe, path, hint)
     return result.text
 
 
@@ -186,11 +189,23 @@ async def _embed_and_upsert(config: Config, item: Item) -> None:
 # --- per-item orchestration ----------------------------------------------------
 
 
-async def process_item(item_id: int, config: Config | None = None) -> None:
+async def process_item(
+    item_id: int, config: Config | None = None, *, skip_vision: bool = False
+) -> None:
     """Run the full enrichment pipeline for one item, resumably (see
     module docstring). Never raises — failures are recorded on the item
     (`enrichment_status='failed'` + `raw_metadata_json.enrichment_error`)
-    rather than propagated, so a batch run continues past one bad item."""
+    rather than propagated, so a batch run continues past one bad item.
+
+    `skip_vision` runs everything except image captioning: transcripts and
+    the original caption/tags still get built into the content document and
+    embedded. Use it when the configured vision model isn't trustworthy for
+    the library at hand — a wrong caption is worse than an absent one once
+    it's embedded, because retrieval can't tell the two apart. Items
+    processed this way still reach `enrichment_status='done'`; re-running
+    later without the flag fills in the captions, since the per-media-file
+    `vision_caption IS NULL` check is what drives that step.
+    """
     config = config or get_config()
 
     with session_scope(config) as conn:
@@ -206,26 +221,28 @@ async def process_item(item_id: int, config: Config | None = None) -> None:
 
     try:
         await ollama_client.ensure_running(config)
-        needs_vision = any(not mf.vision_caption for mf in item.media_files)
+        needs_vision = not skip_vision and any(
+            not mf.vision_caption for mf in item.media_files
+        )
         if needs_vision:
             await ollama_client.ensure_model_pulled(config.models.vision_model, config)
         await ollama_client.ensure_model_pulled(config.models.embedding_model, config)
 
         for media_file in item.media_files:
             if media_file.media_type == "photo":
-                if not media_file.vision_caption:
+                if not media_file.vision_caption and not skip_vision:
                     caption = await _caption_photo(config, media_file)
                     with session_scope(config) as conn:
                         _update_media_file(conn, media_file.id, vision_caption=caption)
                     media_file.vision_caption = caption
             else:  # "video"
-                if not media_file.vision_caption:
+                if not media_file.vision_caption and not skip_vision:
                     caption = await _caption_video(config, media_file)
                     with session_scope(config) as conn:
                         _update_media_file(conn, media_file.id, vision_caption=caption)
                     media_file.vision_caption = caption
                 if media_file.transcript is None:
-                    transcript = await _transcribe_video(config, media_file)
+                    transcript = await _transcribe_video(config, media_file, item.caption)
                     with session_scope(config) as conn:
                         _update_media_file(conn, media_file.id, transcript=transcript)
                     media_file.transcript = transcript
@@ -241,12 +258,14 @@ async def process_item(item_id: int, config: Config | None = None) -> None:
             _set_item_status(conn, item_id, EnrichmentStatus.FAILED, error=str(exc))
 
 
-async def process_items(item_ids: list[int], config: Config | None = None) -> None:
+async def process_items(
+    item_ids: list[int], config: Config | None = None, *, skip_vision: bool = False
+) -> None:
     """Sequentially process a batch of items — the "worker" side of the
     job queue, scheduled as a background task by `routes_enrich.run_enrichment`."""
     config = config or get_config()
     for item_id in item_ids:
-        await process_item(item_id, config)
+        await process_item(item_id, config, skip_vision=skip_vision)
 
 
 # --- queue resolution helpers (used by routes_enrich.py) -----------------------

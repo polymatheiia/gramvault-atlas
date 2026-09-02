@@ -94,12 +94,36 @@ def cancel_import_job(job_id: int, config: Config | None = None) -> ImportJob | 
 # --- DB write helpers ------------------------------------------------------
 
 
-def _get_or_create_author(conn: sqlite3.Connection, username: str | None) -> int | None:
+def _get_or_create_author(
+    conn: sqlite3.Connection, username: str | None, full_name: str | None = None
+) -> int | None:
     if not username:
         return None
     conn.execute("INSERT OR IGNORE INTO authors (username) VALUES (?)", (username,))
+    if full_name:
+        # Backfill only — don't let a later export's blank overwrite a name
+        # we already have.
+        conn.execute(
+            "UPDATE authors SET full_name = ? WHERE username = ? AND full_name IS NULL",
+            (full_name, username),
+        )
     row = conn.execute("SELECT id FROM authors WHERE username = ?", (username,)).fetchone()
     return row["id"] if row is not None else None
+
+
+def _attach_hashtags(conn: sqlite3.Connection, item_id: int, hashtags: list[str]) -> None:
+    """Record the export's hashtags as `kind='hashtag'` tags, keeping them
+    distinct from 'auto' (A3 enrichment) and 'manual' (user-entered) so
+    each source stays attributable."""
+    for name in hashtags:
+        conn.execute("INSERT OR IGNORE INTO tags (name, kind) VALUES (?, 'hashtag')", (name,))
+        row = conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()
+        if row is None:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO item_tags (item_id, tag_id) VALUES (?, ?)",
+            (item_id, row["id"]),
+        )
 
 
 def _item_exists(conn: sqlite3.Connection, external_id: str | None) -> bool:
@@ -114,27 +138,30 @@ def _item_exists(conn: sqlite3.Connection, external_id: str | None) -> bool:
 def _import_saved_item(conn: sqlite3.Connection, saved: SavedItem, job_id: int) -> None:
     if _item_exists(conn, saved.external_id):
         return  # already imported in a previous run of this (or another) job
-    author_id = _get_or_create_author(conn, saved.author_username)
-    conn.execute(
+    author_id = _get_or_create_author(conn, saved.author_username, saved.author_full_name)
+    cursor = conn.execute(
         """
         INSERT INTO items
             (external_id, author_id, media_type, caption, permalink, taken_at,
              import_job_id, raw_metadata_json)
-        VALUES (?, ?, ?, NULL, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             saved.external_id,
             author_id,
             saved.media_type_guess.value,
+            # Older exports carry no real caption for someone else's post, so
+            # `caption` stays NULL there rather than misrepresenting the
+            # title as one. Newer (`label_values`) exports do include it.
+            saved.caption,
             saved.instagram_url,
             saved.saved_at.isoformat() if saved.saved_at else None,
             job_id,
             json.dumps(saved.raw, default=str),
         ),
     )
-    # Note: `caption` is left NULL for saved (other users') items — the
-    # saved-posts export only gives us a title/username, never the real
-    # post caption, so we don't want to misrepresent one as the other.
+    if saved.hashtags and cursor.lastrowid is not None:
+        _attach_hashtags(conn, cursor.lastrowid, saved.hashtags)
 
 
 def _import_own_post(

@@ -199,6 +199,49 @@ class TestProcessItemVideo:
         assert item.media_files[0].vision_caption == ""
         mock_caption.assert_not_awaited()
 
+    @pytest.mark.anyio
+    async def test_skip_vision_still_transcribes_and_embeds(self, tmp_config: Config) -> None:
+        """`--skip-vision` exists for libraries where the local vision model
+        is wrong often enough to poison retrieval. Everything else — the
+        transcript, the content document, the embedding — must still run,
+        and the item must still reach `done`."""
+        with session_scope(tmp_config) as conn:
+            item_id = _insert_item(conn, media_type="video")
+            _insert_media_file(conn, item_id, file_media_type="video", file_path="clip.mp4")
+
+        with (
+            patch.object(pipeline.ollama_client, "ensure_running", new_callable=AsyncMock),
+            patch.object(
+                pipeline.ollama_client, "ensure_model_pulled", new_callable=AsyncMock
+            ) as mock_pull,
+            patch.object(pipeline.keyframes, "extract_keyframes") as mock_extract,
+            patch.object(
+                pipeline.ollama_client, "caption_image", new_callable=AsyncMock
+            ) as mock_caption,
+            patch.object(
+                pipeline.transcription,
+                "transcribe",
+                return_value=TranscriptionResult(text="a recipe for chili lime chicken"),
+            ) as mock_transcribe,
+            patch.object(
+                pipeline.ollama_client, "embed", new_callable=AsyncMock, return_value=[0.1]
+            ),
+            patch.object(pipeline.embedding_store, "upsert_item") as mock_upsert,
+        ):
+            await pipeline.process_item(item_id, config=tmp_config, skip_vision=True)
+
+        item = _get_item(tmp_config, item_id)
+        assert item.enrichment_status == EnrichmentStatus.DONE
+        assert item.media_files[0].transcript == "a recipe for chili lime chicken"
+        assert item.media_files[0].vision_caption is None  # left for a later pass
+        mock_caption.assert_not_awaited()
+        mock_extract.assert_not_called()  # no ffmpeg work either
+        mock_transcribe.assert_called_once()
+        mock_upsert.assert_called()
+        # Only the embedding model is needed — don't pull a vision model we won't use.
+        pulled = {call.args[0] for call in mock_pull.await_args_list}
+        assert pulled == {tmp_config.models.embedding_model}
+
 
 class TestResumability:
     @pytest.mark.anyio
@@ -373,13 +416,31 @@ class TestProcessItems:
     async def test_processes_each_id_sequentially_in_order(self, tmp_config: Config) -> None:
         calls: list[int] = []
 
-        async def fake_process_item(item_id: int, config: Config | None = None) -> None:
+        async def fake_process_item(
+            item_id: int, config: Config | None = None, *, skip_vision: bool = False
+        ) -> None:
             calls.append(item_id)
 
         with patch.object(pipeline, "process_item", new=fake_process_item):
             await pipeline.process_items([3, 1, 2], config=tmp_config)
 
         assert calls == [3, 1, 2]
+
+    @pytest.mark.anyio
+    async def test_skip_vision_is_forwarded_to_each_item(self, tmp_config: Config) -> None:
+        """The flag has to reach `process_item` — forgetting to thread it
+        through would silently run the vision model anyway."""
+        seen: list[bool] = []
+
+        async def fake_process_item(
+            item_id: int, config: Config | None = None, *, skip_vision: bool = False
+        ) -> None:
+            seen.append(skip_vision)
+
+        with patch.object(pipeline, "process_item", new=fake_process_item):
+            await pipeline.process_items([1, 2], config=tmp_config, skip_vision=True)
+
+        assert seen == [True, True]
 
     @pytest.mark.anyio
     async def test_empty_list_does_nothing(self, tmp_config: Config) -> None:

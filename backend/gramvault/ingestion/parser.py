@@ -104,6 +104,11 @@ class SavedItem:
     saved_at: datetime | None
     media_type_guess: MediaType
     raw: dict
+    # Only the newer `label_values` export shape carries these; they stay
+    # None/empty for the older `string_list_data` shape.
+    author_full_name: str | None = None
+    caption: str | None = None
+    hashtags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -228,6 +233,141 @@ def _clean_username(title: str | None) -> str | None:
     return None
 
 
+def _repair_mojibake(text: str | None) -> str | None:
+    """Undo the classic Instagram-export double-encoding.
+
+    Captions in these exports are UTF-8 bytes that were decoded as
+    Latin-1 before being written to JSON, so "które" arrives as
+    "ktÃ³re". Round-tripping through Latin-1 puts the original bytes
+    back. Text that isn't mojibake fails one of the two steps (a real
+    "café" isn't valid UTF-8 once Latin-1 encoded), so it's returned
+    untouched.
+    """
+    if not text:
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+
+
+# --- `label_values` export shape -------------------------------------------
+# Newer exports drop `string_list_data` in favor of a `label_values` list of
+# label/value records, with nested `dict` groups for Owner and Hashtags:
+#
+#   {"timestamp": 1785307002,
+#    "label_values": [
+#      {"label": "URL", "value": "...", "href": "..."},
+#      {"label": "Caption", "value": "..."},
+#      {"title": "Owner", "dict": [{"dict": [{"label": "Username", ...}]}]},
+#      {"title": "Hashtags", "dict": [{"dict": [{"label": "Name", ...}]}]}]}
+
+
+def _labelled_value(label_values: list, label: str) -> str | None:
+    """First non-empty `value`/`href` carrying `label`. A handful of
+    entries repeat a label (e.g. two "Caption" records), so take the
+    first one that actually has content rather than the first match."""
+    for entry in label_values:
+        if not isinstance(entry, dict) or entry.get("label") != label:
+            continue
+        value = entry.get("href") or entry.get("value")
+        if value:
+            return value
+    return None
+
+
+def _titled_group(label_values: list, title: str) -> list:
+    """The nested `dict` list of the group named `title` (Owner,
+    Hashtags, Brand partner), or [] when absent/empty."""
+    for entry in label_values:
+        if not isinstance(entry, dict) or entry.get("title") != title:
+            continue
+        nested = entry.get("dict")
+        if isinstance(nested, list):
+            return nested
+    return []
+
+
+def _group_members(group: list) -> list[list]:
+    """Each member of a titled group is itself a `{"dict": [...]}`
+    wrapper around that member's own label/value records."""
+    members: list[list] = []
+    for member in group:
+        if isinstance(member, dict) and isinstance(member.get("dict"), list):
+            members.append(member["dict"])
+    return members
+
+
+def _parse_label_values_entry(entry: dict) -> SavedItem:
+    label_values = entry.get("label_values")
+    if not isinstance(label_values, list):
+        label_values = []
+
+    href = _labelled_value(label_values, "URL")
+    caption = _repair_mojibake(_labelled_value(label_values, "Caption"))
+    title = _repair_mojibake(_labelled_value(label_values, "Title"))
+
+    owner_members = _group_members(_titled_group(label_values, "Owner"))
+    owner = owner_members[0] if owner_members else []
+    author_username = _clean_username(_labelled_value(owner, "Username"))
+    author_full_name = _repair_mojibake(_labelled_value(owner, "Name"))
+
+    hashtags = [
+        tag
+        for tag in (
+            _repair_mojibake(_labelled_value(member, "Name"))
+            for member in _group_members(_titled_group(label_values, "Hashtags"))
+        )
+        if tag
+    ]
+
+    # This shape puts the saved-at timestamp on the entry itself rather
+    # than alongside the URL.
+    timestamp = entry.get("timestamp")
+    saved_at = (
+        datetime.fromtimestamp(timestamp, tz=UTC)
+        if isinstance(timestamp, (int, float))
+        else None
+    )
+
+    return SavedItem(
+        title=title or None,
+        author_username=author_username,
+        instagram_url=href,
+        external_id=_derive_external_id(href),
+        saved_at=saved_at,
+        media_type_guess=_guess_media_type_from_url(href),
+        raw=entry,
+        author_full_name=author_full_name or None,
+        caption=caption or None,
+        hashtags=hashtags,
+    )
+
+
+def _parse_string_list_entry(entry: dict) -> SavedItem:
+    string_list = entry.get("string_list_data")
+    first = string_list[0] if isinstance(string_list, list) and string_list else {}
+    if not isinstance(first, dict):
+        first = {}
+    href = first.get("href")
+    timestamp = first.get("timestamp")
+    saved_at = (
+        datetime.fromtimestamp(timestamp, tz=UTC)
+        if isinstance(timestamp, (int, float))
+        else None
+    )
+    title = entry.get("title") or None
+    return SavedItem(
+        title=title,
+        author_username=_clean_username(title),
+        instagram_url=href,
+        external_id=_derive_external_id(href),
+        saved_at=saved_at,
+        media_type_guess=_guess_media_type_from_url(href),
+        raw=entry,
+    )
+
+
 def _parse_saved_posts_json(raw_bytes: bytes, member_name: str) -> list[SavedItem]:
     try:
         text = raw_bytes.decode("utf-8")
@@ -251,29 +391,13 @@ def _parse_saved_posts_json(raw_bytes: bytes, member_name: str) -> list[SavedIte
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        string_list = entry.get("string_list_data")
-        first = string_list[0] if isinstance(string_list, list) and string_list else {}
-        if not isinstance(first, dict):
-            first = {}
-        href = first.get("href")
-        timestamp = first.get("timestamp")
-        saved_at = (
-            datetime.fromtimestamp(timestamp, tz=UTC)
-            if isinstance(timestamp, (int, float))
-            else None
-        )
-        title = entry.get("title") or None
-        items.append(
-            SavedItem(
-                title=title,
-                author_username=_clean_username(title),
-                instagram_url=href,
-                external_id=_derive_external_id(href),
-                saved_at=saved_at,
-                media_type_guess=_guess_media_type_from_url(href),
-                raw=entry,
-            )
-        )
+        # Pick the shape per-entry rather than per-file: `string_list_data`
+        # is the older layout, `label_values` the newer one, and dispatching
+        # here keeps a mixed or transitional export working.
+        if isinstance(entry.get("label_values"), list) and "string_list_data" not in entry:
+            items.append(_parse_label_values_entry(entry))
+        else:
+            items.append(_parse_string_list_entry(entry))
     return items
 
 

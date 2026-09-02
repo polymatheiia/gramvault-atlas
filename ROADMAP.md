@@ -6,7 +6,10 @@ This document tracks nice-to-have ideas and follow-up work for future contributo
 
 ## Ingestion
 
-*(No outstanding items logged during v1 development. Ideas: support for incremental/delta re-imports of a newer export without re-processing unchanged items; import progress reporting over the existing SSE infrastructure used by chat.)*
+*(Ideas: support for incremental/delta re-imports of a newer export without re-processing unchanged items; import progress reporting over the existing SSE infrastructure used by chat.)*
+
+- `gramvault link-media` is CLI-only. The same thing on the Import page (pick a directory, show matched/unmatched counts) would put it in reach of users who never open a terminal.
+- The linker matches downloaded files to items by the shortcode in the filename. A content-hash fallback would also catch files renamed after download.
 
 ## AI pipeline
 

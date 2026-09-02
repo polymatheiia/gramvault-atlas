@@ -11,6 +11,7 @@ import zipfile
 from pathlib import Path
 
 from gramvault.config import Config
+from gramvault.db.session import session_scope
 from gramvault.ingestion.importer import import_zip
 from gramvault.models.schemas import JobStatus
 
@@ -191,3 +192,94 @@ def test_list_import_jobs_orders_most_recent_first(tmp_path: Path, tmp_config: C
 
     assert jobs[0].id == job_b.id
     assert jobs[1].id == job_a.id
+
+
+def _write_label_values_export(tmp_path: Path, name: str = "new_export.zip") -> Path:
+    """An export in the newer `label_values` shape, which — unlike the
+    older one — carries the real caption, the owner's display name, and
+    hashtags."""
+    entries = [
+        {
+            "timestamp": 1700000000,
+            "media": [],
+            "label_values": [
+                {
+                    "label": "URL",
+                    "value": "https://www.instagram.com/reel/Da2_CrNoI9n/",
+                    "href": "https://www.instagram.com/reel/Da2_CrNoI9n/",
+                },
+                {"label": "Caption", "value": "roladki z cukinii"},
+                {
+                    "title": "Hashtags",
+                    "dict": [
+                        {"title": "", "dict": [{"label": "Name", "value": "przepis"}]},
+                        {"title": "", "dict": [{"label": "Name", "value": "obiad"}]},
+                    ],
+                },
+                {
+                    "title": "Owner",
+                    "dict": [
+                        {
+                            "title": "",
+                            "dict": [
+                                {"label": "Name", "value": "Alice Cooks"},
+                                {"label": "Username", "value": "chef_alice"},
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+    ]
+    zip_path = tmp_path / name
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("your_instagram_activity/saved/saved_posts.json", json.dumps(entries))
+    return zip_path
+
+
+def test_import_label_values_export_stores_caption_author_and_tags(
+    tmp_path: Path, tmp_config: Config
+) -> None:
+    zip_path = _write_label_values_export(tmp_path)
+
+    import_zip(zip_path, tmp_config)
+
+    with session_scope(tmp_config) as conn:
+        item = conn.execute(
+            "SELECT * FROM items WHERE external_id = ?", ("Da2_CrNoI9n",)
+        ).fetchone()
+        assert item is not None
+        assert item["caption"] == "roladki z cukinii"
+        assert item["media_type"] == "reel"
+        assert item["permalink"] == "https://www.instagram.com/reel/Da2_CrNoI9n/"
+
+        author = conn.execute(
+            "SELECT * FROM authors WHERE id = ?", (item["author_id"],)
+        ).fetchone()
+        assert author["username"] == "chef_alice"
+        assert author["full_name"] == "Alice Cooks"
+
+        tags = conn.execute(
+            """
+            SELECT tags.name, tags.kind FROM tags
+            JOIN item_tags ON item_tags.tag_id = tags.id
+            WHERE item_tags.item_id = ?
+            ORDER BY tags.name
+            """,
+            (item["id"],),
+        ).fetchall()
+        assert [(t["name"], t["kind"]) for t in tags] == [
+            ("obiad", "hashtag"),
+            ("przepis", "hashtag"),
+        ]
+
+
+def test_reimport_label_values_export_dedupes(tmp_path: Path, tmp_config: Config) -> None:
+    zip_path = _write_label_values_export(tmp_path)
+
+    import_zip(zip_path, tmp_config)
+    import_zip(zip_path, tmp_config)
+
+    with session_scope(tmp_config) as conn:
+        assert conn.execute("SELECT COUNT(*) AS n FROM items").fetchone()["n"] == 1
+        assert conn.execute("SELECT COUNT(*) AS n FROM item_tags").fetchone()["n"] == 2
