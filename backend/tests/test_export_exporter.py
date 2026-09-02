@@ -16,6 +16,9 @@ from gramvault.export.exporter import (
 from gramvault.export.markdown_builder import extract_gramvault_id, note_filename
 from gramvault.models.schemas import Author, FileMediaType, Item, MediaFile, MediaType
 
+# Notes the exporter always writes that aren't per-item.
+_NON_ITEM_NOTES = {"GramVault Index.md", "GramVault Dashboard.md"}
+
 
 def _config(tmp_path: Path, *, vault_dir: Path | None, media_mode: str = "copy") -> Config:
     return Config(
@@ -80,7 +83,7 @@ class TestNoteWriting:
         result = export_items(config, items)
         assert result.notes_written == 2
         assert result.notes_updated == 0
-        md_files = [p for p in result.target_dir.glob("*.md") if p.name != "GramVault Index.md"]
+        md_files = [p for p in result.target_dir.glob("*.md") if p.name not in _NON_ITEM_NOTES]
         assert len(md_files) == 2
 
     def test_skips_item_without_id(self, tmp_path: Path) -> None:
@@ -111,7 +114,7 @@ class TestIdempotentReexport:
 
         first = export_items(config, items)
         md_files_after_first = {
-            p.name for p in first.target_dir.glob("*.md") if p.name != "GramVault Index.md"
+            p.name for p in first.target_dir.glob("*.md") if p.name not in _NON_ITEM_NOTES
         }
         assert len(md_files_after_first) == 3
         assert first.notes_written == 3
@@ -119,7 +122,7 @@ class TestIdempotentReexport:
 
         second = export_items(config, items)
         md_files_after_second = {
-            p.name for p in second.target_dir.glob("*.md") if p.name != "GramVault Index.md"
+            p.name for p in second.target_dir.glob("*.md") if p.name not in _NON_ITEM_NOTES
         }
         # Same file set — no "Item (1).md"-style duplicates.
         assert md_files_after_second == md_files_after_first
@@ -162,7 +165,7 @@ class TestIdempotentReexport:
         assert new_filename != old_filename
         assert not (vault_dir / "GramVault" / old_filename).exists()
         assert (vault_dir / "GramVault" / new_filename).exists()
-        md_files = [p for p in result.target_dir.glob("*.md") if p.name != "GramVault Index.md"]
+        md_files = [p for p in result.target_dir.glob("*.md") if p.name not in _NON_ITEM_NOTES]
         assert len(md_files) == 1
 
     def test_gramvault_id_is_stable_lookup_key(self, tmp_path: Path) -> None:
@@ -206,6 +209,63 @@ class TestLayout:
         assert not list((vault_dir / "GramVault" / "beauty").glob("*.md"))
         moved = next((vault_dir / "GramVault" / "skincare").glob("*.md"))
         assert "remember this" in moved.read_text(encoding="utf-8")
+
+
+class TestDashboard:
+    def test_dashboard_note_written_with_category_counts(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+
+        result = export_items(
+            config, [_item(1, category="beauty"), _item(2, category="beauty"), _item(3)]
+        )
+
+        assert result.dashboard_path is not None and result.dashboard_path.exists()
+        text = result.dashboard_path.read_text(encoding="utf-8")
+        assert "| beauty | 2 |" in text
+        assert "Uncategorized | 1" in text
+        assert "%% gramvault:start %%" in text
+
+
+class TestExportDigest:
+    def test_writes_digest_note_and_rewrites_citations(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+        from gramvault.export.exporter import export_digest
+
+        item = _item(7, author=Author(id=1, username="booksacc"))
+        path = export_digest(
+            config,
+            digest_id=1,
+            name="My Reading List",
+            markdown="## Sci-fi\n- **Dune** [[item:7]]\n- **Ghost** [[item:999]]\n",
+            items=[item],
+            template="book-titles",
+        )
+
+        assert path == vault_dir / "GramVault" / "_digests" / "My-Reading-List.md"
+        text = path.read_text(encoding="utf-8")
+        assert f"[[{note_filename(item).removesuffix('.md')}]]" in text
+        assert "[[item:7]]" not in text
+        assert "[[item:999]]" in text  # unknown id left as-is
+        assert "gramvault_digest: 1" in text
+
+    def test_digest_note_preserves_user_tail(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+        from gramvault.export.exporter import export_digest
+
+        export_digest(config, digest_id=1, name="d", markdown="# v1\n", items=[])
+        note = vault_dir / "GramVault" / "_digests" / "d.md"
+        note.write_text(note.read_text() + "\n## Notes\n\nkeep me\n", encoding="utf-8")
+
+        export_digest(config, digest_id=1, name="d", markdown="# v2\n", items=[])
+        text = note.read_text(encoding="utf-8")
+        assert "v2" in text and "v1" not in text
+        assert "keep me" in text
 
 
 class TestMediaModes:

@@ -123,7 +123,7 @@ class TestExportEndToEnd:
         assert job_status["failed_items"] == 0
 
         note_files = [
-            p for p in (vault_dir / "GramVault").glob("*.md") if p.name != "GramVault Index.md"
+            p for p in (vault_dir / "GramVault").glob("*.md") if p.name not in {"GramVault Index.md", "GramVault Dashboard.md"}
         ]
         assert len(note_files) == 1
         text = note_files[0].read_text(encoding="utf-8")
@@ -145,7 +145,7 @@ class TestExportEndToEnd:
         assert second_job["notes_updated"] == 1
 
         note_files = [
-            p for p in (vault_dir / "GramVault").glob("*.md") if p.name != "GramVault Index.md"
+            p for p in (vault_dir / "GramVault").glob("*.md") if p.name not in {"GramVault Index.md", "GramVault Dashboard.md"}
         ]
         assert len(note_files) == 1
 

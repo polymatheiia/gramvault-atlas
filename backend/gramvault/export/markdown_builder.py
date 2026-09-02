@@ -226,7 +226,7 @@ def extract_gramvault_id(note_text: str) -> int | None:
     return gramvault_id if isinstance(gramvault_id, int) else None
 
 
-def _user_tail(existing_text: str) -> str:
+def user_tail(existing_text: str) -> str:
     """The user-authored content after `%% gramvault:end %%`. Empty for a
     legacy (marker-less) note — its whole body was GramVault's."""
     _, body = _split_frontmatter(existing_text)
@@ -287,7 +287,7 @@ def build_note_markdown(
         for key, value in existing_fm.items():
             if key not in _OWNED_FRONTMATTER_KEYS:
                 frontmatter[key] = value
-        tail = _user_tail(existing_text)
+        tail = user_tail(existing_text)
 
     body = _build_body(item, media_links)
     managed = f"{MANAGED_START}\n{body}{MANAGED_END}\n"
@@ -312,4 +312,5 @@ __all__ = [
     "note_relpath",
     "render_frontmatter",
     "sanitize_filename_component",
+    "user_tail",
 ]

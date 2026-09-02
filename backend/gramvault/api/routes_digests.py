@@ -28,8 +28,14 @@ from gramvault.ai.errors import ProviderNotReadyError
 from gramvault.ai.providers import get_provider
 from gramvault.api import jobs
 from gramvault.api.deps import get_config_dependency
+from gramvault.chat.retrieval import fetch_items
 from gramvault.config import Config
 from gramvault.db.session import session_scope
+from gramvault.export.exporter import (
+    VaultNotConfiguredError,
+    VaultPathNotFoundError,
+    export_digest,
+)
 from gramvault.models.schemas import Digest, JobKind
 
 router = APIRouter(prefix="/api/digests", tags=["digests"])
@@ -250,6 +256,40 @@ async def get_digest(
     config: Config = Depends(get_config_dependency),
 ) -> Digest:
     return _load_digest(config, digest_id)
+
+
+class DigestExportResponse(BaseModel):
+    path: str
+
+
+@router.post("/{digest_id}/export", response_model=DigestExportResponse)
+async def export_digest_to_vault(
+    digest_id: int,
+    config: Config = Depends(get_config_dependency),
+) -> DigestExportResponse:
+    """Write the digest into the configured Obsidian vault at
+    `<subfolder>/_digests/<name>.md`, with `[[item:<id>]]` citations
+    rewritten to links to the exported item notes."""
+    digest = _load_digest(config, digest_id)
+    if not digest.markdown:
+        raise HTTPException(status_code=409, detail="This digest has no markdown yet")
+
+    with session_scope(config) as conn:
+        items = list(fetch_items(conn, digest.item_ids).values())
+
+    try:
+        path = export_digest(
+            config,
+            digest_id=digest_id,
+            name=digest.name,
+            markdown=digest.markdown,
+            items=items,
+            template=digest.template,
+            model=digest.model,
+        )
+    except (VaultNotConfiguredError, VaultPathNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return DigestExportResponse(path=str(path))
 
 
 @router.get("/{digest_id}/download", response_class=PlainTextResponse)

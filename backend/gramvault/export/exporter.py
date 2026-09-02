@@ -29,24 +29,35 @@ Vault path handling:
 
 from __future__ import annotations
 
+import re
 import shutil
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from gramvault.config import Config
 from gramvault.export.index_builder import IndexEntry, build_index_markdown
 from gramvault.export.markdown_builder import (
+    DASHBOARD_NOTE_FILENAME,
     INDEX_NOTE_FILENAME,
+    MANAGED_END,
+    MANAGED_START,
     MediaLink,
     build_note_markdown,
     extract_gramvault_id,
     media_filename,
     note_filename,
     note_relpath,
+    render_frontmatter,
+    sanitize_filename_component,
+    user_tail,
 )
+from gramvault.export.overview_builder import build_dashboard_markdown
 from gramvault.models.schemas import Item
 
 MEDIA_SUBDIR_NAME = "media"
+DIGESTS_SUBDIR_NAME = "_digests"
+_CITATION_RE = re.compile(r"\[\[item:(\d+)\]\]")
 
 
 class VaultNotConfiguredError(Exception):
@@ -71,6 +82,7 @@ class ExportResult:
     media_files_copied: int = 0
     skipped: list[SkippedItem] = field(default_factory=list)
     index_path: Path | None = None
+    dashboard_path: Path | None = None
 
 
 def resolve_export_target(config: Config, vault_subfolder: str | None) -> Path:
@@ -212,15 +224,77 @@ def export_items(
     index_path.write_text(index_markdown, encoding="utf-8")
     result.index_path = index_path
 
+    dashboard_path = target_dir / DASHBOARD_NOTE_FILENAME
+    dashboard_path.write_text(
+        build_dashboard_markdown(items, subfolder_name=target_dir.name), encoding="utf-8"
+    )
+    result.dashboard_path = dashboard_path
+
     return result
 
 
+def _rewrite_citations(markdown: str, items: list[Item]) -> str:
+    """`[[item:<id>]]` -> `[[<note basename>]]` so a digest's citations
+    resolve to the exported item notes. An id with no matching item is
+    left as-is (post-processing already dropped truly dangling ones)."""
+    link_by_id = {
+        item.id: note_filename(item).removesuffix(".md")
+        for item in items
+        if item.id is not None
+    }
+    return _CITATION_RE.sub(
+        lambda m: f"[[{link_by_id[int(m.group(1))]}]]"
+        if int(m.group(1)) in link_by_id
+        else m.group(0),
+        markdown,
+    )
+
+
+def export_digest(
+    config: Config,
+    *,
+    digest_id: int,
+    name: str,
+    markdown: str,
+    items: list[Item],
+    template: str | None = None,
+    model: str | None = None,
+    vault_subfolder: str | None = None,
+) -> Path:
+    """Write a digest's Markdown into `<subfolder>/_digests/<name>.md` as a
+    managed note (citations rewritten to `[[<item note>]]`). Idempotent on
+    the slugified name; preserves any user content after the end marker."""
+    target_dir = resolve_export_target(config, vault_subfolder)
+    digests_dir = target_dir / DIGESTS_SUBDIR_NAME
+    digests_dir.mkdir(parents=True, exist_ok=True)
+
+    path = digests_dir / f"{sanitize_filename_component(name)}.md"
+    tail = user_tail(path.read_text(encoding="utf-8")) if path.is_file() else ""
+
+    frontmatter = render_frontmatter(
+        {
+            "gramvault_digest": digest_id,
+            "template": template,
+            "model": model,
+            "generated": datetime.now().isoformat(timespec="seconds"),
+        }
+    )
+    body = _rewrite_citations(markdown, items).strip()
+    doc = f"{frontmatter}\n{MANAGED_START}\n# {name}\n\n{body}\n{MANAGED_END}\n"
+    if tail:
+        doc += f"\n{tail}\n"
+    path.write_text(doc, encoding="utf-8")
+    return path
+
+
 __all__ = [
+    "DIGESTS_SUBDIR_NAME",
     "MEDIA_SUBDIR_NAME",
     "ExportResult",
     "SkippedItem",
     "VaultNotConfiguredError",
     "VaultPathNotFoundError",
+    "export_digest",
     "export_items",
     "resolve_export_target",
 ]

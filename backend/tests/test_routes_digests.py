@@ -129,6 +129,35 @@ class TestCreate:
             job = jobs.get(conn, body["job_id"])
         assert job.status == JobStatus.DONE
 
+    def test_export_to_vault(self, client: TestClient, tmp_config: Config, tmp_path) -> None:
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        tmp_config.paths.obsidian_vault_dir = str(vault)
+
+        i1 = _seed(tmp_config, "read Dune")
+        with session_scope(tmp_config) as conn:
+            digest_id = conn.execute(
+                "INSERT INTO digests (name, template, status, selection_json, item_ids_json, "
+                "markdown) VALUES ('Books', 'book-titles', 'done', '{}', ?, ?)",
+                (json.dumps([i1]), f"- **Dune** [[item:{i1}]]\n"),
+            ).lastrowid
+
+        res = client.post(f"/api/digests/{digest_id}/export")
+        assert res.status_code == 200
+        path = res.json()["path"]
+        assert path.endswith("GramVault/_digests/Books.md")
+        text = (vault / "GramVault" / "_digests" / "Books.md").read_text()
+        assert "[[item:" not in text  # rewritten to the item note link
+
+    def test_export_without_vault_400(self, client: TestClient, tmp_config: Config) -> None:
+        with session_scope(tmp_config) as conn:
+            digest_id = conn.execute(
+                "INSERT INTO digests (name, template, status, selection_json, item_ids_json, "
+                "markdown) VALUES ('d', 'book-titles', 'done', '{}', '[]', '# x\n')"
+            ).lastrowid
+        res = client.post(f"/api/digests/{digest_id}/export")
+        assert res.status_code == 400
+
     def test_history_omits_markdown_and_download_serves_it(
         self, client: TestClient, tmp_config: Config
     ) -> None:
