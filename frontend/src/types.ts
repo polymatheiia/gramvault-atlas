@@ -168,6 +168,75 @@ export interface Job {
   created_at: string | null
 }
 
+// --- models / providers (GET/PUT/POST /api/models*) ---
+
+export type AiTask = 'chat' | 'vision' | 'embedding' | 'categorize' | 'digest'
+export type ProviderKind = 'ollama' | 'openai' | 'anthropic'
+
+export interface OllamaModelInfo {
+  name: string
+  size: number | null
+  modified_at: string | null
+}
+
+export interface ProviderInfo {
+  name: string
+  kind: string
+  base_url: string | null
+  api_key_set: boolean
+}
+
+export interface TaskRouting {
+  provider: string
+  model: string
+  source: 'configured' | 'default'
+}
+
+export interface ModelsOverview {
+  ollama_reachable: boolean
+  ollama_models: OllamaModelInfo[]
+  providers: ProviderInfo[]
+  tasks: Record<AiTask, TaskRouting>
+  auth_token_set: boolean
+}
+
+export interface SuggestedModel {
+  tasks: string[]
+  provider_kind: ProviderKind
+  model: string
+  size: string
+  note: string
+}
+
+export interface TaskRoutingUpdate {
+  task: AiTask
+  provider: string
+  model: string
+  provider_kind?: ProviderKind | null
+  base_url?: string | null
+}
+
+export interface TaskRoutingUpdateResponse extends ModelsOverview {
+  needs_reembed: boolean
+}
+
+export interface SecretUpdate {
+  provider?: string | null
+  api_key?: string | null
+  auth_token?: string | null
+  set_auth_token?: boolean
+}
+
+export interface TestTaskResult {
+  ok: boolean
+  detail: string
+  latency_ms: number | null
+}
+
+export interface JobStartResponse {
+  job_id: number
+}
+
 // --- categories (GET/POST/PATCH/DELETE /api/library/categories) ---
 
 export interface CategoryListResponse {
