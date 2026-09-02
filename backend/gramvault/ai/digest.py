@@ -42,8 +42,12 @@ _BUILTIN_DIR = Path(__file__).parent / "digest_templates"
 
 # ~chars per token, matching ai/classifier.py's cheap estimate.
 _CHARS_PER_TOKEN = 4
-# Leave headroom below a typical context window for the prompt + the reply.
-_EXTRACT_BUDGET_TOKENS = 8000
+# Source-text budget per extract batch. Kept under a default local Ollama
+# context window (num_ctx 4096) once the system prompt + schema + JSON
+# reply are accounted for — a bigger batch makes a small local model
+# thrash on prompt eval and time out. A hosted `digest` provider has far
+# more headroom but the extra request count is cheap either way.
+_EXTRACT_BUDGET_TOKENS = 3000
 
 # Rough USD per 1M tokens (in, out), 2026 public list prices. Best-effort —
 # used only for the pre-flight estimate and the stored manifest.
@@ -301,22 +305,69 @@ _REDUCE_SYSTEM = (
     "entry. Never invent a URL or a citation. Output only the Markdown, no "
     "preamble or code fence."
 )
+_REDUCE_MERGE_SYSTEM = (
+    "You merge several Markdown fragments (each already in the target format) "
+    "into one document: combine same-named sections, deduplicate bullets, keep "
+    "every [[item:<id>]] citation, and order sections by size. Output only the "
+    "merged Markdown."
+)
+# Entries-JSON budget for a single reduce call; above it, reduce in
+# fitting chunks and then merge the fragments (the plan's two-level reduce).
+_REDUCE_BUDGET_TOKENS = 6000
+
+
+async def _reduce_call(provider: Any, model: str, system: str, user: str) -> tuple[str, int, int]:
+    reply = await provider.chat(
+        model, [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    )
+    return reply.strip(), estimate_tokens(system + user), estimate_tokens(reply)
+
+
+def _chunk_rows(rows: list[dict], budget_tokens: int) -> list[list[dict]]:
+    chunks: list[list[dict]] = []
+    chunk: list[dict] = []
+    size = 0
+    for row in rows:
+        estimate = estimate_tokens(json.dumps(row, ensure_ascii=False))
+        if chunk and size + estimate > budget_tokens:
+            chunks.append(chunk)
+            chunk, size = [], 0
+        chunk.append(row)
+        size += estimate
+    if chunk:
+        chunks.append(chunk)
+    return chunks
 
 
 async def _reduce(
     provider: Any, model: str, template: DigestTemplate, name: str, rows: list[dict]
 ) -> tuple[str, int, int]:
     payload = json.dumps(rows, ensure_ascii=False)
-    user = (
+
+    def _prompt(entries_json: str) -> str:
+        return f"# {name}\n\n{template.reduce_prompt}\n\nExtracted entries (JSON):\n{entries_json}"
+
+    if estimate_tokens(payload) <= _REDUCE_BUDGET_TOKENS:
+        return await _reduce_call(provider, model, _REDUCE_SYSTEM, _prompt(payload))
+
+    # Two-level: reduce each fitting chunk to Markdown, then merge the fragments.
+    chunks = _chunk_rows(rows, _REDUCE_BUDGET_TOKENS)
+    fragments: list[str] = []
+    tokens_in = tokens_out = 0
+    for chunk in chunks:
+        md, t_in, t_out = await _reduce_call(
+            provider, model, _REDUCE_SYSTEM, _prompt(json.dumps(chunk, ensure_ascii=False))
+        )
+        fragments.append(md)
+        tokens_in += t_in
+        tokens_out += t_out
+
+    merge_user = (
         f"# {name}\n\n{template.reduce_prompt}\n\n"
-        f"Extracted entries (JSON):\n{payload}"
+        "Fragments to merge:\n\n" + "\n\n---\n\n".join(fragments)
     )
-    messages = [
-        {"role": "system", "content": _REDUCE_SYSTEM},
-        {"role": "user", "content": user},
-    ]
-    reply = await provider.chat(model, messages)
-    return reply.strip(), estimate_tokens(_REDUCE_SYSTEM + user), estimate_tokens(reply)
+    merged, t_in, t_out = await _reduce_call(provider, model, _REDUCE_MERGE_SYSTEM, merge_user)
+    return merged, tokens_in + t_in, tokens_out + t_out
 
 
 # --- post-processing -----------------------------------------------
@@ -324,20 +375,32 @@ async def _reduce(
 
 _MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _HANDLE_RE = re.compile(r"(?<![\w@])@([A-Za-z0-9_.]+)")
+# Any citation-looking marker, so a malformed one (`[[item:]]`, `[[item:x]]`)
+# gets cleaned up too, not just numeric ones that resolve.
+_ANY_CITATION_RE = re.compile(r"\[\[item:[^\]]*\]\]")
+# A bullet / list line left with no content once its dead citation is gone.
+_EMPTY_BULLET_RE = re.compile(r"^[\s>*\-–—]*$")
 
 
 def _postprocess(markdown: str, items_by_id: dict[int, Item]) -> str:
-    """Drop dangling `[[item:<id>]]` markers and, on every line that cites
-    exactly one item, rewrite the markdown-link target and any `@handle`
-    to the values from the DB."""
+    """Drop dangling / malformed `[[item:<id>]]` markers and, on every line
+    that cites exactly one item, rewrite the markdown-link target and any
+    `@handle` to the values from the DB."""
     out_lines: list[str] = []
     for line in markdown.splitlines():
+        had_marker = bool(_ANY_CITATION_RE.search(line))
         cited = [int(m) for m in re.findall(CITATION_MARKER_REGEX, line)]
         known = [i for i in cited if i in items_by_id]
 
-        # Remove markers for ids not in the selection.
-        for missing in set(cited) - set(known):
-            line = line.replace(f"[[item:{missing}]]", "").rstrip()
+        # Strip every marker that isn't a resolvable citation (unknown id,
+        # empty, or non-numeric).
+        valid_markers = {f"[[item:{i}]]" for i in known}
+        line = _ANY_CITATION_RE.sub(
+            lambda m, valid=valid_markers: m.group(0) if m.group(0) in valid else "", line
+        ).rstrip()
+        # A bullet whose only content was a now-dead citation is noise.
+        if had_marker and not known and _EMPTY_BULLET_RE.match(line):
+            continue
 
         if len(known) == 1:
             item = items_by_id[known[0]]

@@ -12,8 +12,10 @@ import pytest
 from gramvault.ai import digest as digest_engine
 from gramvault.ai.digest import (
     DigestError,
+    DigestTemplate,
     Selection,
     _postprocess,
+    _reduce,
     plan_batches,
     run_digest,
     select_items,
@@ -114,6 +116,27 @@ class TestBatching:
         assert sum(len(b) for b in batches) == 4
 
 
+class TestReduce:
+    @pytest.mark.anyio
+    async def test_two_level_reduce_when_entries_exceed_budget(self) -> None:
+        template = DigestTemplate(
+            name="t", description="", extract_prompt="", reduce_prompt="merge"
+        )
+        rows = [{"note": "x " * 400, "item_id": i} for i in range(60)]  # ~12k tokens
+
+        async def fake_chat(_model, messages):
+            user = messages[-1]["content"]
+            return "## merged\n- a [[item:1]]\n" if "Fragments to merge" in user else "## chunk\n"
+
+        provider = AsyncMock()
+        provider.chat.side_effect = fake_chat
+        markdown, t_in, t_out = await _reduce(provider, "m", template, "d", rows)
+
+        assert "merged" in markdown
+        assert provider.chat.await_count >= 3  # >=2 chunk reduces + 1 merge
+        assert t_in > 0 and t_out > 0
+
+
 class TestPostprocess:
     def _item(self, item_id: int, username: str, url: str) -> Item:
         return Item(
@@ -138,6 +161,15 @@ class TestPostprocess:
         assert "https://ig/p/REAL/" in out
         assert "@true_account" in out
         assert "wrong" not in out
+
+    def test_strips_malformed_markers_and_drops_dead_bullets(self) -> None:
+        items = {1: self._item(1, "a", "u1")}
+        md = "## Unresolved\n- [[item:]]\n- [[item:abc]]\n- kept [[item:1]]\n"
+        out = _postprocess(md, items)
+        assert "[[item:]]" not in out
+        assert "[[item:abc]]" not in out
+        assert "- kept [[item:1]]" in out
+        assert out.count("\n- ") == 1  # the two dead bullets are gone
 
     def test_leaves_multi_citation_lines_alone(self) -> None:
         items = {1: self._item(1, "a", "u1"), 2: self._item(2, "b", "u2")}
