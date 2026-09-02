@@ -54,13 +54,16 @@ def load_items(conn: sqlite3.Connection, item_ids: list[int] | None = None) -> l
     if item_ids is not None and len(item_ids) == 0:
         return []
 
-    query = "SELECT * FROM items"
+    query = (
+        "SELECT items.*, categories.name AS category_name "
+        "FROM items LEFT JOIN categories ON categories.id = items.category_id"
+    )
     params: tuple[object, ...] = ()
     if item_ids is not None:
         placeholders = ",".join("?" for _ in item_ids)
-        query += f" WHERE id IN ({placeholders})"
+        query += f" WHERE items.id IN ({placeholders})"
         params = tuple(item_ids)
-    query += " ORDER BY id"
+    query += " ORDER BY items.id"
 
     rows = conn.execute(query, params).fetchall()
 
@@ -80,6 +83,11 @@ def load_items(conn: sqlite3.Connection, item_ids: list[int] | None = None) -> l
                 imported_at=data.get("imported_at"),
                 import_job_id=data.get("import_job_id"),
                 enrichment_status=data.get("enrichment_status", "pending"),
+                category_id=data.get("category_id"),
+                category=data.get("category_name"),
+                category_source=data.get("category_source"),
+                category_confidence=data.get("category_confidence"),
+                category_reason=data.get("category_reason"),
                 tags=_load_tags(conn, item_id),
                 media_files=_load_media_files(conn, item_id),
             )

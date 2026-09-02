@@ -102,6 +102,11 @@ class ExportConfig(BaseModel):
     # with Obsidian `![[...]]` syntax. "link": leave media where it is
     # and link out to the original path instead.
     media_mode: Literal["copy", "link"] = "copy"
+    # Note foldering inside the export subfolder. "flat": every note in one
+    # folder. "by-category": `<category>/<note>.md`. "by-date":
+    # `<YYYY-MM>/<note>.md`. A re-export moves notes when this (or an
+    # item's category) changes.
+    layout: Literal["flat", "by-category", "by-date"] = "flat"
 
 
 ProviderKind = Literal["ollama", "openai", "anthropic"]

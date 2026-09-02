@@ -42,6 +42,7 @@ from gramvault.export.markdown_builder import (
     extract_gramvault_id,
     media_filename,
     note_filename,
+    note_relpath,
 )
 from gramvault.models.schemas import Item
 
@@ -90,16 +91,24 @@ def resolve_export_target(config: Config, vault_subfolder: str | None) -> Path:
     return target_dir
 
 
+_NON_ITEM_NOTES = {INDEX_NOTE_FILENAME, "GramVault Dashboard.md"}
+
+
 def _scan_existing_notes_by_gramvault_id(target_dir: Path) -> dict[int, Path]:
     """Best-effort map of gramvault_id -> existing note path, built by
-    reading frontmatter out of every `.md` file already in `target_dir`
-    (except the index). Used to clean up stale duplicates -- see the
-    idempotency note in the module docstring."""
+    reading frontmatter out of every `.md` file under `target_dir`
+    (recursively, so a note filed under a `by-category` subfolder is
+    found; skips the index/dashboard and the `_digests`/`_moc` folders).
+    Used to clean up stale duplicates and to carry a note's user-authored
+    tail when its path changes -- see the idempotency note in the module
+    docstring."""
     mapping: dict[int, Path] = {}
     if not target_dir.is_dir():
         return mapping
-    for path in target_dir.glob("*.md"):
-        if path.name == INDEX_NOTE_FILENAME:
+    for path in target_dir.rglob("*.md"):
+        if path.name in _NON_ITEM_NOTES or path.name == "media":
+            continue
+        if any(part in {"_digests", "_moc"} for part in path.relative_to(target_dir).parts):
             continue
         try:
             text = path.read_text(encoding="utf-8")
@@ -150,6 +159,8 @@ def export_items(
     existing_notes_by_id = _scan_existing_notes_by_gramvault_id(target_dir)
     index_entries: list[IndexEntry] = []
 
+    layout = config.export.layout
+
     for item in items:
         if item.id is None:
             result.skipped.append(
@@ -157,18 +168,26 @@ def export_items(
             )
             continue
 
+        relpath = note_relpath(item, layout)
         filename = note_filename(item)
-        note_path = target_dir / filename
+        note_path = target_dir / relpath
+        note_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Clean up a stale note for this same gramvault_id living under a
-        # different (now outdated) filename.
+        # A note for this gramvault_id may already exist under a different
+        # path (author/date/category changed, or the layout changed). Carry
+        # its user-authored tail to the new path, then remove the stale file.
         stale_path = existing_notes_by_id.get(item.id)
+        source_text: str | None = None
+        if note_path.exists():
+            source_text = note_path.read_text(encoding="utf-8")
+        elif stale_path is not None and stale_path.is_file():
+            source_text = stale_path.read_text(encoding="utf-8")
         if stale_path is not None and stale_path != note_path:
             stale_path.unlink(missing_ok=True)
 
-        existed_before = note_path.exists()
+        existed_before = source_text is not None
         media_links = _copy_or_link_media(item, media_dir, media_mode, result)
-        note_text = build_note_markdown(item, media_links)
+        note_text = build_note_markdown(item, media_links, existing_text=source_text)
         note_path.write_text(note_text, encoding="utf-8")
 
         if existed_before:

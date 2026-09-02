@@ -55,6 +55,17 @@ ollama:
 #     token: "a-long-random-string"   # then every /api/* call needs
 #                                     # Authorization: Bearer <token>
 
+export:
+  # Subfolder created inside `paths.obsidian_vault_dir` for the notes.
+  default_vault_subfolder: "GramVault"
+  # "copy" media into the vault and embed it, or "link" out to the original.
+  media_mode: "copy"
+  # Note foldering: "flat", "by-category" (<category>/<note>.md), or
+  # "by-date" (<YYYY-MM>/<note>.md). A re-export moves notes when this or
+  # an item's category changes; user notes below `%% gramvault:end %%` and
+  # extra frontmatter keys are always preserved.
+  layout: "flat"
+
 chunking:
   # Text chunking parameters for embeddings (captions, transcripts, notes).
   chunk_size: 512

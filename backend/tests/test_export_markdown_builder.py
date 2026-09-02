@@ -9,12 +9,15 @@ from datetime import datetime
 import pytest
 
 from gramvault.export.markdown_builder import (
+    MANAGED_END,
+    MANAGED_START,
     MediaLink,
     build_frontmatter,
     build_note_markdown,
     extract_gramvault_id,
     media_filename,
     note_filename,
+    note_relpath,
     render_frontmatter,
     sanitize_filename_component,
 )
@@ -230,3 +233,79 @@ class TestBuildNoteMarkdown:
         item = _make_item(id=555)
         note = build_note_markdown(item)
         assert extract_gramvault_id(note) == 555
+
+    def test_wraps_body_in_managed_markers(self) -> None:
+        note = build_note_markdown(_make_item())
+        assert MANAGED_START in note
+        assert note.index(MANAGED_START) < note.index("A lovely sunset") < note.index(MANAGED_END)
+
+
+class TestManagedRegion:
+    def test_preserves_user_tail_and_extra_frontmatter(self) -> None:
+        first = build_note_markdown(_make_item(caption="v1"))
+        # Simulate the user adding frontmatter + notes below the end marker.
+        edited = first.replace("gramvault_id: 42", "gramvault_id: 42\nrating: 5") + (
+            "\n## My thoughts\n\nkeep this paragraph\n"
+        )
+
+        second = build_note_markdown(_make_item(caption="v2"), existing_text=edited)
+
+        assert "v2" in second and "v1" not in second
+        assert "rating: 5" in second
+        assert "## My thoughts" in second
+        assert "keep this paragraph" in second
+
+    def test_legacy_note_without_markers_becomes_managed(self) -> None:
+        legacy = "---\ngramvault_id: 42\n---\n\nold hand-written body\n"
+        out = build_note_markdown(_make_item(caption="fresh"), existing_text=legacy)
+        assert MANAGED_START in out
+        assert "old hand-written body" not in out
+        assert "fresh" in out
+
+
+class TestNewFrontmatter:
+    def test_splits_hashtags_from_tags_and_adds_category(self) -> None:
+        item = _make_item(
+            category="beauty",
+            tags=[
+                Tag(id=1, name="skincare", kind="manual"),
+                Tag(id=2, name="rossmann", kind="hashtag"),
+            ],
+        )
+        fm = build_frontmatter(item)
+        assert fm["category"] == "beauty"
+        assert fm["tags"] == ["skincare"]
+        assert fm["hashtags"] == ["rossmann"]
+        assert fm["account"] == "@jane.doe"
+
+    def test_enrichment_flags_reflect_media(self) -> None:
+        item = _make_item(
+            media_files=[
+                MediaFile(
+                    id=1,
+                    item_id=42,
+                    file_path="c.mp4",
+                    media_type=FileMediaType.VIDEO,
+                    transcript="hi",
+                    ocr_text="TEXT",
+                )
+            ]
+        )
+        fm = build_frontmatter(item)
+        assert fm["enrichment"] == {"transcript": True, "ocr": True, "vision": False}
+
+
+class TestNoteRelpath:
+    def test_flat_is_bare_filename(self) -> None:
+        assert "/" not in note_relpath(_make_item(), "flat")
+
+    def test_by_category_slugifies_the_folder(self) -> None:
+        rel = note_relpath(_make_item(category="books/manga"), "by-category")
+        assert rel.startswith("books-manga/")
+
+    def test_by_category_uncategorized_folder(self) -> None:
+        assert note_relpath(_make_item(category=None), "by-category").startswith("uncategorized/")
+
+    def test_by_date_uses_year_month(self) -> None:
+        rel = note_relpath(_make_item(), "by-date")
+        assert rel.startswith("2024-03/")

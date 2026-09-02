@@ -175,6 +175,39 @@ class TestIdempotentReexport:
         assert extract_gramvault_id(note_text) == 1
 
 
+class TestLayout:
+    def _vault(self, tmp_path: Path) -> Path:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        return vault_dir
+
+    def test_by_category_files_notes_under_category_folders(self, tmp_path: Path) -> None:
+        vault_dir = self._vault(tmp_path)
+        config = _config(tmp_path, vault_dir=vault_dir)
+        config.export.layout = "by-category"
+
+        export_items(config, [_item(1, category="beauty"), _item(2, category="workouts")])
+
+        assert (vault_dir / "GramVault" / "beauty").is_dir()
+        assert list((vault_dir / "GramVault" / "beauty").glob("*.md"))
+        assert list((vault_dir / "GramVault" / "workouts").glob("*.md"))
+
+    def test_changing_category_moves_the_note_and_keeps_user_tail(self, tmp_path: Path) -> None:
+        vault_dir = self._vault(tmp_path)
+        config = _config(tmp_path, vault_dir=vault_dir)
+        config.export.layout = "by-category"
+
+        export_items(config, [_item(1, category="beauty")])
+        note = next((vault_dir / "GramVault" / "beauty").glob("*.md"))
+        note.write_text(note.read_text() + "\n## Mine\n\nremember this\n", encoding="utf-8")
+
+        export_items(config, [_item(1, category="skincare")])
+
+        assert not list((vault_dir / "GramVault" / "beauty").glob("*.md"))
+        moved = next((vault_dir / "GramVault" / "skincare").glob("*.md"))
+        assert "remember this" in moved.read_text(encoding="utf-8")
+
+
 class TestMediaModes:
     def test_copy_mode_copies_file_and_embeds(self, tmp_path: Path) -> None:
         vault_dir = tmp_path / "vault"
