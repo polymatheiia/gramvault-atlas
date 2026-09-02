@@ -22,7 +22,9 @@ Open source (MIT), owner: aleksanderislami03-cell.
   it. `config.example.yaml` is the committed template; setup scripts copy it.
 - Never commit: `library/`, `data/`, `*.db`, chroma dirs, any real Instagram
   export, any real media, or absolute paths containing a username.
-- Commit author must stay `Aleksander <aleksanderislami03-cell@users.noreply.github.com>`.
+- Commits already on `origin/main` stay under their original author
+  (`Aleksander Islami`). Commits made from here on are the fork owner's own
+  (`polymatheiia`, per this checkout's git config).
 - No telemetry, no network calls except localhost Ollama.
 - Screenshots/GIFs for README: only with the demo fixture
   (`tests/fixtures/sample_export.zip`) imported — never real user data.

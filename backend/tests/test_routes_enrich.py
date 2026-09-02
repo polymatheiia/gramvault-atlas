@@ -14,8 +14,10 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from gramvault.ai.ollama_client import ModelNotPulledError, OllamaNotRunningError
+from gramvault.api import jobs
 from gramvault.config import Config
 from gramvault.db.session import session_scope
+from gramvault.models.schemas import JobKind
 
 
 def _seed_item(
@@ -53,6 +55,7 @@ class TestRunEnrichment:
 
         assert response.status_code == 202
         assert response.json()["queued_count"] == 1
+        assert response.json()["job_id"] is not None
         mock_process.assert_awaited_once()
         args, _kwargs = mock_process.call_args
         assert args[0] == [item_id]
@@ -234,6 +237,68 @@ class TestRunEnrichment:
         assert response.status_code == 202
         checked = {call.args[0] for call in mock_pulled.await_args_list}
         assert checked == {"llava:7b", "nomic-embed-text"}
+
+
+class TestEnrichmentJob:
+    def test_second_run_while_one_is_active_is_409(
+        self, client: TestClient, tmp_config: Config
+    ) -> None:
+        _seed_item(tmp_config)
+        # Pretend a previous enrich job is still running.
+        with session_scope(tmp_config) as conn:
+            jobs.create(conn, JobKind.ENRICH)
+
+        with (
+            patch(
+                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "gramvault.api.routes_enrich.pipeline.process_items", new_callable=AsyncMock
+            ) as mock_process,
+        ):
+            response = client.post("/api/enrich/run", json={})
+
+        assert response.status_code == 409
+        mock_process.assert_not_awaited()
+
+    def test_run_creates_a_job_row_and_reports_progress(
+        self, client: TestClient, tmp_config: Config
+    ) -> None:
+        item_id = _seed_item(tmp_config)
+
+        with (
+            patch(
+                "gramvault.api.routes_enrich.ollama_client.ensure_running",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "gramvault.api.routes_enrich.ollama_client.ensure_model_pulled",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "gramvault.api.routes_enrich.pipeline.process_items", new_callable=AsyncMock
+            ) as mock_process,
+        ):
+            # Drive the real progress callback so the job row records it.
+            async def fake_process(ids, cfg, *, cancel_check=None, progress_cb=None):
+                if progress_cb:
+                    progress_cb(len(ids), len(ids))
+
+            mock_process.side_effect = fake_process
+            response = client.post("/api/enrich/run", json={"item_ids": [item_id]})
+
+        assert response.status_code == 202
+        job_id = response.json()["job_id"]
+
+        job = client.get(f"/api/jobs/{job_id}").json()
+        assert job["kind"] == "enrich"
+        assert job["status"] == "done"
+        assert job["result"] == {"processed": 1, "total": 1}
 
 
 class TestEnrichmentProgress:

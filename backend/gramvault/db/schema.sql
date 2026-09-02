@@ -1,11 +1,12 @@
 -- GramVault SQLite schema.
 --
--- Migration approach: this is intentionally a single idempotent script
--- (CREATE TABLE IF NOT EXISTS everywhere). Call gramvault.db.session.init_db()
--- to apply it. For a single-user local-first app at v1, this is sufficient;
--- if the schema needs to evolve later, add numbered `migrations/NNN_*.sql`
--- files and a small version-tracking table rather than hand-editing this
--- file destructively. Don't over-engineer this for now.
+-- This is the canonical full definition for a FRESH database. Existing
+-- databases are brought up to date by the numbered files in
+-- `db/migrations/` (tracked via `PRAGMA user_version`) — see
+-- `gramvault.db.session`. Every change here must be mirrored by a
+-- migration, and vice versa; `tests/test_db_migrations.py` fails if the
+-- two drift. `gramvault.db.session.init_db()` picks the right path
+-- (schema.sql for a fresh DB, migrations for an existing one).
 
 PRAGMA foreign_keys = ON;
 
@@ -140,3 +141,32 @@ CREATE TABLE IF NOT EXISTS export_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_export_jobs_created_at ON export_jobs(created_at);
+
+-- Background jobs for the Pipeline UI (enrich / categorize / digest /
+-- pull / model_pull / reembed). Mirror of migration 001_jobs.sql — keep
+-- the two in sync. `import_jobs` / `export_jobs` predate this and keep
+-- their own bespoke progress columns.
+CREATE TABLE IF NOT EXISTS jobs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind              TEXT NOT NULL CHECK (kind IN (
+                        'enrich', 'categorize', 'digest', 'pull', 'model_pull', 'reembed'
+                      )),
+    status            TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
+                        'pending', 'running', 'done', 'failed', 'cancelled'
+                      )),
+    params_json       TEXT,
+    progress_json     TEXT,
+    result_json       TEXT,
+    error_message     TEXT,
+    cancel_requested  INTEGER NOT NULL DEFAULT 0,
+    started_at        TEXT,
+    finished_at       TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_kind_status ON jobs(kind, status);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+
+-- At most one active (pending/running) job per kind, enforced in the DB.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_one_active_per_kind
+    ON jobs(kind) WHERE status IN ('pending', 'running');

@@ -42,6 +42,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 from gramvault.ai import document_builder, embedding_store, keyframes, ollama_client, transcription
@@ -259,13 +260,29 @@ async def process_item(
 
 
 async def process_items(
-    item_ids: list[int], config: Config | None = None, *, skip_vision: bool = False
+    item_ids: list[int],
+    config: Config | None = None,
+    *,
+    skip_vision: bool = False,
+    cancel_check: Callable[[], bool] | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
 ) -> None:
     """Sequentially process a batch of items — the "worker" side of the
-    job queue, scheduled as a background task by `routes_enrich.run_enrichment`."""
+    job queue, scheduled as a background task by `routes_enrich.run_enrichment`.
+
+    `cancel_check`, if given, is polled before each item; returning True
+    stops the batch (already-processed items keep their results).
+    `progress_cb(done, total)`, if given, is called after each item.
+    """
     config = config or get_config()
-    for item_id in item_ids:
+    total = len(item_ids)
+    for index, item_id in enumerate(item_ids):
+        if cancel_check is not None and cancel_check():
+            logger.info("process_items: cancellation requested, stopping after %d/%d", index, total)
+            break
         await process_item(item_id, config, skip_vision=skip_vision)
+        if progress_cb is not None:
+            progress_cb(index + 1, total)
 
 
 # --- queue resolution helpers (used by routes_enrich.py) -----------------------

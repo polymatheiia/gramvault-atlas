@@ -9,6 +9,7 @@ Run via `gramvault serve` (see `gramvault.cli`) or directly with uvicorn:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,9 +19,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from gramvault.api import routes_chat, routes_enrich, routes_export, routes_import, routes_library
+from gramvault.api import (
+    jobs,
+    routes_chat,
+    routes_enrich,
+    routes_export,
+    routes_import,
+    routes_jobs,
+    routes_library,
+)
 from gramvault.config import Config, get_config
 from gramvault.db.session import get_connection, init_db
+
+logger = logging.getLogger(__name__)
 
 # Vite's default dev server origin — allowed for local frontend development.
 # TODO(A5): adjust/remove once the real frontend dev workflow is settled.
@@ -45,12 +56,32 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        # Make sure the SQLite schema exists before serving requests.
-        # Cheap/idempotent (CREATE TABLE IF NOT EXISTS) so this is safe to
-        # run on every startup.
+        # Bring the schema up to date (fresh DB -> schema.sql; existing DB
+        # -> pending migrations) and reclaim work abandoned by a previous
+        # process: an item left 'running' or a job left 'pending'/'running'
+        # by a crash/restart would otherwise never be picked up again.
         conn = get_connection(config)
         try:
             init_db(conn)
+            items_reset = conn.execute(
+                "UPDATE items SET enrichment_status = 'pending' "
+                "WHERE enrichment_status = 'running'"
+            ).rowcount
+            jobs_reset = jobs.reclaim_orphans(conn)
+            for table in ("import_jobs", "export_jobs"):
+                conn.execute(
+                    f"UPDATE {table} SET status = 'failed', "
+                    "error_message = COALESCE(error_message, 'interrupted by restart'), "
+                    "finished_at = datetime('now') "
+                    "WHERE status IN ('pending', 'running')"
+                )
+            conn.commit()
+            if items_reset or jobs_reset:
+                logger.info(
+                    "startup: reclaimed %d running item(s) and %d job(s) from a previous process",
+                    items_reset,
+                    jobs_reset,
+                )
         finally:
             conn.close()
         yield
@@ -76,6 +107,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(routes_import.router)
     app.include_router(routes_library.router)
     app.include_router(routes_enrich.router)
+    app.include_router(routes_jobs.router)
     app.include_router(routes_chat.router)
     app.include_router(routes_export.router)
 

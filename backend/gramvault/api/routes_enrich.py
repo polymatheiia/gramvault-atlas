@@ -17,11 +17,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 
 from gramvault.ai import ollama_client, pipeline
+from gramvault.api import jobs
 from gramvault.api.deps import get_config_dependency
 from gramvault.chat.retrieval import fetch_items
 from gramvault.config import Config
 from gramvault.db.session import session_scope
-from gramvault.models.schemas import EnrichmentStatus, Item
+from gramvault.models.schemas import EnrichmentStatus, Item, JobKind
 
 router = APIRouter(prefix="/api/enrich", tags=["enrich"])
 
@@ -33,6 +34,9 @@ class EnrichmentRunRequest(BaseModel):
 
 class EnrichmentRunResponse(BaseModel):
     queued_count: int
+    # The `jobs` row tracking this run — poll `/api/jobs/{job_id}` for
+    # progress/cancellation. None when there was nothing to enqueue.
+    job_id: int | None = None
 
 
 class EnrichmentProgress(BaseModel):
@@ -83,14 +87,43 @@ async def run_enrichment(
     except (ollama_client.OllamaNotRunningError, ollama_client.ModelNotPulledError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+    if not item_ids:
+        return EnrichmentRunResponse(queued_count=0)
+
     with session_scope(config) as conn:
         if body.item_ids is not None:
             pipeline.mark_items_pending(conn, item_ids)
+        try:
+            job = jobs.create(
+                conn, JobKind.ENRICH, params={"item_ids": body.item_ids, "count": len(item_ids)}
+            )
+        except jobs.JobConflict as exc:
+            raise HTTPException(
+                status_code=409, detail="An enrichment job is already running"
+            ) from exc
 
-    if item_ids:
-        background_tasks.add_task(pipeline.process_items, item_ids, config)
+    assert job.id is not None
 
-    return EnrichmentRunResponse(queued_count=len(item_ids))
+    async def _work(ctx: jobs.JobContext) -> dict:
+        ctx.progress(done=0, total=len(item_ids))
+        done = 0
+
+        def _bump(done_count: int, total: int) -> None:
+            nonlocal done
+            done = done_count
+            ctx.progress(done=done_count, total=total)
+
+        await pipeline.process_items(
+            item_ids,
+            config,
+            cancel_check=lambda: ctx.cancelled,
+            progress_cb=_bump,
+        )
+        return {"processed": done, "total": len(item_ids)}
+
+    background_tasks.add_task(jobs.run, job.id, _work, config)
+
+    return EnrichmentRunResponse(queued_count=len(item_ids), job_id=job.id)
 
 
 @router.get("/progress", response_model=EnrichmentProgress)

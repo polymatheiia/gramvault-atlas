@@ -16,8 +16,10 @@ defaults) so agents working in parallel don't break each other.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,12 +40,26 @@ class FileMediaType(StrEnum):
 
 
 class JobStatus(StrEnum):
-    """Shared status enum for long-running jobs (import, export)."""
+    """Shared status enum for long-running jobs (import, export, and the
+    `jobs` table). `CANCELLED` only applies to `jobs`-table jobs."""
 
     PENDING = "pending"
     RUNNING = "running"
     DONE = "done"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class JobKind(StrEnum):
+    """Kinds of background job tracked in the `jobs` table (the Pipeline
+    UI). `import` / `export` predate this and keep their own tables."""
+
+    ENRICH = "enrich"
+    CATEGORIZE = "categorize"
+    DIGEST = "digest"
+    PULL = "pull"
+    MODEL_PULL = "model_pull"
+    REEMBED = "reembed"
 
 
 class EnrichmentStatus(StrEnum):
@@ -137,6 +153,52 @@ class ImportJob(ORMBase):
         if self.total_items <= 0:
             return 0.0
         return round(100 * self.processed_items / self.total_items, 1)
+
+
+class Job(ORMBase):
+    """A row in the `jobs` table. The `*_json` TEXT columns are surfaced
+    as parsed objects (`params` / `progress` / `result`); build one from a
+    `sqlite3.Row` with `Job.from_row(row)`, not `model_validate`."""
+
+    id: int | None = None
+    kind: JobKind
+    status: JobStatus = JobStatus.PENDING
+    params: dict[str, Any] | None = None
+    progress: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    error_message: str | None = None
+    cancel_requested: bool = False
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime | None = None
+
+    @classmethod
+    def from_row(cls, row: Any) -> Job:
+        data = dict(row)
+
+        def _loads(key: str) -> dict[str, Any] | None:
+            raw = data.get(key)
+            if not raw:
+                return None
+            try:
+                parsed = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return None
+            return parsed if isinstance(parsed, dict) else None
+
+        return cls(
+            id=data["id"],
+            kind=data["kind"],
+            status=data["status"],
+            params=_loads("params_json"),
+            progress=_loads("progress_json"),
+            result=_loads("result_json"),
+            error_message=data.get("error_message"),
+            cancel_requested=bool(data.get("cancel_requested")),
+            started_at=data.get("started_at"),
+            finished_at=data.get("finished_at"),
+            created_at=data.get("created_at"),
+        )
 
 
 class ChatCitation(ORMBase):

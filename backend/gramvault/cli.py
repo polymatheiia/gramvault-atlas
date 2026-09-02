@@ -335,6 +335,33 @@ def init_db_command() -> None:
     typer.echo(f"Database ready at {config.resolved_db_path}")
 
 
+@app.command(name="migrate")
+def migrate_command(
+    status_only: bool = typer.Option(
+        False, "--status", help="Only print the current/target schema version, don't apply anything"
+    ),
+) -> None:
+    """Apply any pending schema migrations to the configured database."""
+    from gramvault.db.session import latest_migration_version, migrate, schema_version
+
+    config = get_config()
+    conn = get_connection(config)
+    try:
+        current = schema_version(conn)
+        target = latest_migration_version()
+        if status_only:
+            typer.echo(f"schema version: {current} (latest available: {target})")
+            return
+        if current >= target:
+            typer.echo(f"Already up to date (schema version {current}).")
+            return
+        typer.echo(f"Migrating {config.resolved_db_path}: {current} -> {target}")
+        final = migrate(conn)
+        typer.echo(f"Done. Schema version is now {final}.")
+    finally:
+        conn.close()
+
+
 def main() -> None:
     """Console-script entry point (see pyproject.toml [project.scripts])."""
     app()
