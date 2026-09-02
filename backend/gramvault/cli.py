@@ -335,6 +335,65 @@ def init_db_command() -> None:
     typer.echo(f"Database ready at {config.resolved_db_path}")
 
 
+@app.command(name="import-categories")
+def import_categories_command(
+    csv_path: Path = typer.Argument(
+        ..., help="CSV with at least `id` (gramvault item id) and `category` (name) columns"
+    ),
+) -> None:
+    """Backfill item categories from a CSV of hand-labelled assignments.
+
+    Each matched item is set to `category_source='manual'` /
+    `category_confidence=1.0`, so the automatic classifier will never
+    overwrite it. Category names in the CSV must already exist in the
+    `categories` table (they're seeded on first run).
+    """
+    import csv as _csv
+
+    from gramvault.db.session import session_scope
+
+    config = get_config()
+    if not csv_path.exists():
+        typer.echo(f"No such file: {csv_path}")
+        raise typer.Exit(code=1)
+
+    with session_scope(config) as conn:
+        name_to_id = {
+            row["name"]: row["id"] for row in conn.execute("SELECT id, name FROM categories")
+        }
+        applied = missing_item = 0
+        unknown: dict[str, int] = {}
+        with csv_path.open(newline="", encoding="utf-8") as handle:
+            reader = _csv.DictReader(handle)
+            if reader.fieldnames is None or "id" not in reader.fieldnames or "category" not in reader.fieldnames:
+                typer.echo("CSV must have `id` and `category` columns.")
+                raise typer.Exit(code=1)
+            for row in reader:
+                raw_id, name = (row.get("id") or "").strip(), (row.get("category") or "").strip()
+                if not raw_id.isdigit():
+                    continue
+                category_id = name_to_id.get(name)
+                if category_id is None:
+                    unknown[name] = unknown.get(name, 0) + 1
+                    continue
+                changed = conn.execute(
+                    "UPDATE items SET category_id = ?, category_source = 'manual', "
+                    "category_confidence = 1.0, category_updated_at = datetime('now') "
+                    "WHERE id = ?",
+                    (category_id, int(raw_id)),
+                ).rowcount
+                if changed:
+                    applied += 1
+                else:
+                    missing_item += 1
+
+    typer.echo(f"Categorised {applied} item(s).")
+    if missing_item:
+        typer.echo(f"  {missing_item} row(s) skipped — no such item in the library.")
+    for name, n in sorted(unknown.items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {n} row(s) skipped — unknown category '{name}'.")
+
+
 @app.command(name="migrate")
 def migrate_command(
     status_only: bool = typer.Option(

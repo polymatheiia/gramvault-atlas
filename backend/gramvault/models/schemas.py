@@ -103,6 +103,24 @@ class Tag(ORMBase):
     kind: TagKind = TagKind.AUTO
 
 
+class CategorySource(StrEnum):
+    KEYWORD = "keyword"
+    LLM = "llm"
+    MANUAL = "manual"
+
+
+class Category(ORMBase):
+    id: int | None = None
+    name: str
+    sort_order: int = 0
+    color: str | None = None
+    description: str | None = None
+
+
+class CategoryWithCount(Category):
+    count: int = 0
+
+
 class MediaFile(ORMBase):
     id: int | None = None
     item_id: int
@@ -130,6 +148,10 @@ class Item(ORMBase):
     imported_at: datetime | None = None
     import_job_id: int | None = None
     enrichment_status: EnrichmentStatus = EnrichmentStatus.PENDING
+    category_id: int | None = None
+    category: str | None = None  # resolved category name, for display
+    category_source: CategorySource | None = None
+    category_confidence: float | None = None
     tags: list[Tag] = Field(default_factory=list)
     media_files: list[MediaFile] = Field(default_factory=list)
 

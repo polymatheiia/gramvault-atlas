@@ -154,3 +154,37 @@ class TestConnectionPragmas:
         numbers = [n for n, _ in found]
         assert numbers == sorted(numbers)
         assert numbers[0] == 1
+
+
+class TestCategoriesMigration:
+    def test_seeds_14_categories_and_adds_item_columns(
+        self, tmp_config: Config
+    ) -> None:
+        conn = get_connection(tmp_config)
+        try:
+            init_db(conn)  # fresh -> schema.sql seeds via seed_default_categories()
+            names = [r["name"] for r in conn.execute("SELECT name FROM categories ORDER BY sort_order")]
+            assert len(names) == 14
+            assert names[0] == "workouts" and names[-1] == "other"
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
+            assert {
+                "category_id",
+                "category_source",
+                "category_confidence",
+                "category_reason",
+                "category_updated_at",
+            } <= cols
+        finally:
+            conn.close()
+
+    def test_migration_002_is_rerunnable(self, tmp_config: Config) -> None:
+        conn = get_connection(tmp_config)
+        try:
+            init_db(conn)
+            # Re-applying 002's up() must not error or duplicate categories.
+            for _, path in session._discover_migrations():
+                if path.name.startswith("002"):
+                    session._apply_migration(conn, path)
+            assert conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 14
+        finally:
+            conn.close()

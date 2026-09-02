@@ -52,6 +52,46 @@ _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _MIGRATION_NAME_RE = re.compile(r"^(\d+)_.+\.(sql|py)$")
 
+# GramVault's default category taxonomy for a saved-reels library. The
+# single source of truth — the `categories` table is seeded from this on a
+# fresh database (`init_db`) and by migration `002_categories.py` on an
+# existing one; after that it's user-editable via `/api/library/categories`.
+# The descriptions double as the rubric the LLM classifier is handed.
+DEFAULT_CATEGORIES: list[tuple[str, str]] = [
+    ("workouts", "Exercise routines, physio and rehab, mobility, gym, running, sport training."),
+    (
+        "psychology",
+        "Mental health, therapy concepts, ADHD / neurodivergence, emotional regulation, "
+        "relationships and attachment, self-help.",
+    ),
+    ("books/manga", "Book and manga recommendations, reading lists, specific titles and authors."),
+    ("movies/tv/anime", "Film, TV and anime recommendations, titles, watchlists."),
+    ("memes", "Jokes and humour with no practical takeaway."),
+    ("recipes", "Cooking recipes — ingredients, methods, food preparation."),
+    (
+        "lifehacks",
+        "Practical tips and tricks: cleaning, organising, kitchen, travel, DIY, everyday tech.",
+    ),
+    ("websites", "Useful websites, apps, tools and online services."),
+    ("astrology", "Astrology, natal charts, tarot, manifestation, law of assumption."),
+    ("research", "A specific study, scientific finding, paper or data-driven claim."),
+    ("home ideas", "Interior design, furniture, decor, home organisation, houseplants."),
+    ("beauty", "Skincare, makeup, haircare, fragrance, grooming techniques and products."),
+    ("animals", "Pets, wildlife, animal care / training / behaviour, animal content."),
+    ("other", "Anything that doesn't fit the categories above."),
+]
+
+
+def seed_default_categories(conn: sqlite3.Connection) -> None:
+    """Insert `DEFAULT_CATEGORIES` into the `categories` table, skipping any
+    that already exist (by name). Idempotent; requires the table to exist."""
+    for order, (name, description) in enumerate(DEFAULT_CATEGORIES):
+        conn.execute(
+            "INSERT INTO categories (name, sort_order, description) VALUES (?, ?, ?) "
+            "ON CONFLICT(name) DO NOTHING",
+            (name, order, description),
+        )
+
 
 def get_db_path(config: Config | None = None) -> Path:
     """Resolve the configured SQLite database file path."""
@@ -174,6 +214,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     if has_items is None:
         conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
         conn.execute(f"PRAGMA user_version = {latest_migration_version()}")
+        seed_default_categories(conn)
         conn.commit()
     else:
         migrate(conn)

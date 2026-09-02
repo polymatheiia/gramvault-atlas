@@ -207,3 +207,127 @@ def test_update_item_tags_404_for_unknown_item(client: TestClient, tmp_config: C
     response = client.patch("/api/library/items/999999/tags", json={"tags": ["x"]})
 
     assert response.status_code == 404
+
+
+# --- categories -----------------------------------------------------------
+
+
+def _seed_categorised(config: Config) -> dict[str, int]:
+    """Two items, one put in 'recipes', one left uncategorised."""
+    ids = _seed_library(config)
+    with session_scope(config) as conn:
+        recipes_id = conn.execute(
+            "SELECT id FROM categories WHERE name = 'recipes'"
+        ).fetchone()["id"]
+        conn.execute(
+            "UPDATE items SET category_id = ?, category_source = 'manual' WHERE id = ?",
+            (recipes_id, ids["item1_id"]),
+        )
+    ids["recipes_id"] = recipes_id
+    return ids
+
+
+def test_default_categories_are_seeded(client: TestClient, tmp_config: Config) -> None:
+    body = client.get("/api/library/categories").json()
+    names = [c["name"] for c in body["categories"]]
+    assert "recipes" in names and "psychology" in names and "other" in names
+    assert len(names) == 14
+    # sorted by sort_order
+    assert body["categories"] == sorted(body["categories"], key=lambda c: c["sort_order"])
+
+
+def test_categories_report_counts_and_uncategorised(
+    client: TestClient, tmp_config: Config
+) -> None:
+    _seed_categorised(tmp_config)
+    body = client.get("/api/library/categories").json()
+    by_name = {c["name"]: c for c in body["categories"]}
+    assert by_name["recipes"]["count"] == 1
+    assert by_name["memes"]["count"] == 0
+    assert body["uncategorized_count"] == 1
+    assert body["total"] == 2
+
+
+def test_list_items_filter_by_category(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_categorised(tmp_config)
+
+    recipes = client.get("/api/library/items", params={"category": "recipes"}).json()
+    assert [i["id"] for i in recipes["items"]] == [ids["item1_id"]]
+    assert recipes["items"][0]["category"] == "recipes"
+    assert recipes["items"][0]["category_source"] == "manual"
+
+    uncat = client.get(
+        "/api/library/items", params={"category": "__uncategorized__"}
+    ).json()
+    assert [i["id"] for i in uncat["items"]] == [ids["item2_id"]]
+
+    unknown = client.get("/api/library/items", params={"category": "nope"}).json()
+    assert unknown["total"] == 0
+
+
+def test_patch_item_category_sets_and_clears(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_categorised(tmp_config)
+    memes_id = client.get("/api/library/categories").json()["categories"]
+    memes_id = next(c["id"] for c in memes_id if c["name"] == "memes")
+
+    set_resp = client.patch(
+        f"/api/library/items/{ids['item2_id']}", json={"category_id": memes_id}
+    )
+    assert set_resp.status_code == 200
+    assert set_resp.json()["category"] == "memes"
+    assert set_resp.json()["category_source"] == "manual"
+
+    clear_resp = client.patch(
+        f"/api/library/items/{ids['item2_id']}", json={"category_id": None}
+    )
+    assert clear_resp.status_code == 200
+    assert clear_resp.json()["category"] is None
+    assert clear_resp.json()["category_source"] is None
+
+
+def test_patch_item_category_rejects_unknown_category(
+    client: TestClient, tmp_config: Config
+) -> None:
+    ids = _seed_library(tmp_config)
+    resp = client.patch(
+        f"/api/library/items/{ids['item1_id']}", json={"category_id": 99999}
+    )
+    assert resp.status_code == 422
+
+
+def test_patch_item_category_404_for_unknown_item(client: TestClient) -> None:
+    assert client.patch("/api/library/items/424242", json={"category_id": None}).status_code == 404
+
+
+def test_create_rename_and_delete_category(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_categorised(tmp_config)
+
+    created = client.post(
+        "/api/library/categories", json={"name": "cooking", "description": "food"}
+    )
+    assert created.status_code == 201
+    new_id = created.json()["id"]
+
+    assert client.post("/api/library/categories", json={"name": "cooking"}).status_code == 409
+
+    renamed = client.patch(f"/api/library/categories/{new_id}", json={"name": "food & drink"})
+    assert renamed.status_code == 200 and renamed.json()["name"] == "food & drink"
+
+    # deleting an unused category is fine
+    assert client.delete(f"/api/library/categories/{new_id}").status_code == 204
+
+    # deleting a populated one without move_to is refused
+    del_resp = client.delete(f"/api/library/categories/{ids['recipes_id']}")
+    assert del_resp.status_code == 409
+
+    # ...but works with move_to, reassigning the items
+    other_id = next(
+        c["id"]
+        for c in client.get("/api/library/categories").json()["categories"]
+        if c["name"] == "other"
+    )
+    moved = client.delete(
+        f"/api/library/categories/{ids['recipes_id']}", params={"move_to": other_id}
+    )
+    assert moved.status_code == 204
+    assert client.get("/api/library/items", params={"category": "other"}).json()["total"] == 1

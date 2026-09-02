@@ -20,7 +20,19 @@ CREATE TABLE IF NOT EXISTS authors (
     created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Single-category taxonomy for items (distinct from the many-to-many
+-- `tags`). Seeded from `gramvault.db.session.DEFAULT_CATEGORIES` by
+-- `init_db` / migration 002; user-editable via /api/library/categories.
+CREATE TABLE IF NOT EXISTS categories (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    color       TEXT,
+    description TEXT
+);
+
 -- One saved post/reel/carousel. May have multiple media_files (carousel).
+-- The category_* columns mirror migration 002_categories.py.
 CREATE TABLE IF NOT EXISTS items (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     external_id         TEXT UNIQUE, -- Instagram shortcode/post id, if known
@@ -33,12 +45,18 @@ CREATE TABLE IF NOT EXISTS items (
     import_job_id       INTEGER REFERENCES import_jobs(id) ON DELETE SET NULL,
     enrichment_status   TEXT NOT NULL DEFAULT 'pending'
                          CHECK (enrichment_status IN ('pending', 'running', 'done', 'failed')),
-    raw_metadata_json   TEXT -- original exporter JSON blob, for anything unmapped
+    raw_metadata_json   TEXT, -- original exporter JSON blob, for anything unmapped
+    category_id         INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+    category_source     TEXT CHECK (category_source IN ('keyword', 'llm', 'manual')),
+    category_confidence REAL,
+    category_reason     TEXT,
+    category_updated_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_author_id ON items(author_id);
 CREATE INDEX IF NOT EXISTS idx_items_enrichment_status ON items(enrichment_status);
 CREATE INDEX IF NOT EXISTS idx_items_import_job_id ON items(import_job_id);
+CREATE INDEX IF NOT EXISTS idx_items_category_id ON items(category_id);
 
 -- Individual media files belonging to an item (photo, or video + optional
 -- extracted keyframes are tracked separately by the enrichment pipeline,

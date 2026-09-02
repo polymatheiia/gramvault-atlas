@@ -1,11 +1,12 @@
 """Library/gallery API (Agent A2, consumed by Agent A5's frontend).
 
-Owns: the browsable gallery grid, filtering by author/media type/tag/date/
-free-text, single-item detail, and manual tag editing.
+Owns: the browsable gallery grid, filtering by author/media type/tag/
+category/date/free-text, single-item detail, manual tag editing, manual
+category assignment, and the category taxonomy CRUD.
 
 Uses plain SQL (via `gramvault.db.session.session_scope`) joining
-items/authors/media_files/tags, per the project's "sqlite3, not an ORM"
-convention (see `gramvault/db/session.py`).
+items/authors/media_files/tags/categories, per the project's "sqlite3,
+not an ORM" convention (see `gramvault/db/session.py`).
 """
 
 from __future__ import annotations
@@ -19,15 +20,28 @@ from pydantic import BaseModel
 from gramvault.api.deps import get_config_dependency
 from gramvault.config import Config
 from gramvault.db.session import session_scope
-from gramvault.models.schemas import Author, Item, MediaFile, MediaType, Tag
+from gramvault.models.schemas import (
+    Author,
+    Category,
+    CategoryWithCount,
+    Item,
+    MediaFile,
+    MediaType,
+    Tag,
+)
 
 router = APIRouter(prefix="/api/library", tags=["library"])
 
+# Sentinel `category` filter value meaning "items with no category yet".
+UNCATEGORIZED = "__uncategorized__"
+
 _ITEM_SELECT = """
     SELECT items.*, authors.username AS author_username, authors.full_name AS author_full_name,
-           authors.profile_url AS author_profile_url, authors.avatar_path AS author_avatar_path
+           authors.profile_url AS author_profile_url, authors.avatar_path AS author_avatar_path,
+           categories.name AS category_name
     FROM items
     LEFT JOIN authors ON authors.id = items.author_id
+    LEFT JOIN categories ON categories.id = items.category_id
 """
 
 
@@ -40,6 +54,31 @@ class ItemListResponse(BaseModel):
 
 class TagUpdateRequest(BaseModel):
     tags: list[str]
+
+
+class ItemCategoryUpdateRequest(BaseModel):
+    # None clears the category. Any other value must be an existing category id.
+    category_id: int | None = None
+
+
+class CategoryCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+    color: str | None = None
+    sort_order: int | None = None
+
+
+class CategoryUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    color: str | None = None
+    sort_order: int | None = None
+
+
+class CategoryListResponse(BaseModel):
+    categories: list[CategoryWithCount]
+    uncategorized_count: int
+    total: int
 
 
 def _fetch_media_files(conn: sqlite3.Connection, item_id: int) -> list[MediaFile]:
@@ -84,9 +123,20 @@ def _row_to_item(conn: sqlite3.Connection, row: sqlite3.Row) -> Item:
         imported_at=data["imported_at"],
         import_job_id=data["import_job_id"],
         enrichment_status=data["enrichment_status"],
+        category_id=data.get("category_id"),
+        category=data.get("category_name"),
+        category_source=data.get("category_source"),
+        category_confidence=data.get("category_confidence"),
         tags=_fetch_tags(conn, data["id"]),
         media_files=_fetch_media_files(conn, data["id"]),
     )
+
+
+def _category_row(conn: sqlite3.Connection, category_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM categories WHERE id = ?", (category_id,)).fetchone()
+
+
+# --- gallery listing -------------------------------------------------------
 
 
 @router.get("/items", response_model=ItemListResponse)
@@ -94,6 +144,10 @@ async def list_items(
     author: str | None = Query(default=None, description="Filter by author username"),
     media_type: MediaType | None = Query(default=None, description="Filter by media type"),
     tag: str | None = Query(default=None, description="Filter by tag name"),
+    category: str | None = Query(
+        default=None,
+        description=f"Filter by category name, or '{UNCATEGORIZED}' for items with no category",
+    ),
     q: str | None = Query(default=None, description="Free-text search over captions"),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
@@ -102,7 +156,7 @@ async def list_items(
     config: Config = Depends(get_config_dependency),
 ) -> ItemListResponse:
     """Paginated, filterable gallery listing, joined with each item's
-    author/tags/media_files."""
+    author/category/tags/media_files."""
     clauses: list[str] = []
     params: list[object] = []
     joins = ""
@@ -113,6 +167,11 @@ async def list_items(
     if media_type:
         clauses.append("items.media_type = ?")
         params.append(media_type.value)
+    if category == UNCATEGORIZED:
+        clauses.append("items.category_id IS NULL")
+    elif category:
+        clauses.append("items.category_id = (SELECT id FROM categories WHERE name = ?)")
+        params.append(category)
     if q:
         clauses.append("items.caption LIKE ?")
         params.append(f"%{q}%")
@@ -139,7 +198,7 @@ async def list_items(
 
         offset = (page - 1) * page_size
         rows = conn.execute(
-            f"SELECT DISTINCT items.* FROM items "
+            f"SELECT DISTINCT items.id AS id FROM items "
             f"LEFT JOIN authors ON authors.id = items.author_id {joins} {where_sql} "
             f"ORDER BY items.imported_at DESC LIMIT ? OFFSET ?",
             [*params, page_size, offset],
@@ -189,6 +248,164 @@ async def list_tags(
     with session_scope(config) as conn:
         rows = conn.execute("SELECT * FROM tags ORDER BY name").fetchall()
     return [Tag.model_validate(dict(row)) for row in rows]
+
+
+# --- categories ----------------------------------------------------------
+
+
+@router.get("/categories", response_model=CategoryListResponse)
+async def list_categories(
+    config: Config = Depends(get_config_dependency),
+) -> CategoryListResponse:
+    """The category taxonomy with per-category item counts, plus how many
+    items are still uncategorised (for the gallery filter)."""
+    with session_scope(config) as conn:
+        rows = conn.execute(
+            """
+            SELECT c.*, (SELECT COUNT(*) FROM items WHERE items.category_id = c.id) AS count
+            FROM categories c
+            ORDER BY c.sort_order, c.name
+            """
+        ).fetchall()
+        uncategorized = conn.execute(
+            "SELECT COUNT(*) AS n FROM items WHERE category_id IS NULL"
+        ).fetchone()["n"]
+        total = conn.execute("SELECT COUNT(*) AS n FROM items").fetchone()["n"]
+    return CategoryListResponse(
+        categories=[CategoryWithCount.model_validate(dict(r)) for r in rows],
+        uncategorized_count=uncategorized,
+        total=total,
+    )
+
+
+@router.post("/categories", response_model=Category, status_code=201)
+async def create_category(
+    body: CategoryCreateRequest,
+    config: Config = Depends(get_config_dependency),
+) -> Category:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Category name must not be empty")
+    with session_scope(config) as conn:
+        if conn.execute("SELECT 1 FROM categories WHERE name = ?", (name,)).fetchone():
+            raise HTTPException(status_code=409, detail=f"Category '{name}' already exists")
+        sort_order = body.sort_order
+        if sort_order is None:
+            sort_order = (
+                conn.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM categories")
+                .fetchone()["n"]
+            )
+        cursor = conn.execute(
+            "INSERT INTO categories (name, description, color, sort_order) VALUES (?, ?, ?, ?)",
+            (name, body.description, body.color, sort_order),
+        )
+        row = _category_row(conn, cursor.lastrowid)
+    return Category.model_validate(dict(row))
+
+
+@router.patch("/categories/{category_id}", response_model=Category)
+async def update_category(
+    category_id: int,
+    body: CategoryUpdateRequest,
+    config: Config = Depends(get_config_dependency),
+) -> Category:
+    with session_scope(config) as conn:
+        if _category_row(conn, category_id) is None:
+            raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+        if body.name is not None:
+            new_name = body.name.strip()
+            if not new_name:
+                raise HTTPException(status_code=422, detail="Category name must not be empty")
+            clash = conn.execute(
+                "SELECT 1 FROM categories WHERE name = ? AND id != ?", (new_name, category_id)
+            ).fetchone()
+            if clash:
+                raise HTTPException(status_code=409, detail=f"Category '{new_name}' already exists")
+            conn.execute("UPDATE categories SET name = ? WHERE id = ?", (new_name, category_id))
+        for field in ("description", "color", "sort_order"):
+            value = getattr(body, field)
+            if value is not None:
+                conn.execute(
+                    f"UPDATE categories SET {field} = ? WHERE id = ?", (value, category_id)
+                )
+        row = _category_row(conn, category_id)
+    return Category.model_validate(dict(row))
+
+
+@router.delete("/categories/{category_id}", status_code=204)
+async def delete_category(
+    category_id: int,
+    move_to: int | None = Query(
+        default=None, description="Reassign items in this category to this category id first"
+    ),
+    config: Config = Depends(get_config_dependency),
+) -> None:
+    """Delete a category. If items still use it, either pass `move_to` to
+    reassign them, or accept that they become uncategorised (the FK is
+    `ON DELETE SET NULL`) — the latter requires no items, so an accidental
+    delete of a populated category needs an explicit choice."""
+    with session_scope(config) as conn:
+        if _category_row(conn, category_id) is None:
+            raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+        in_use = conn.execute(
+            "SELECT COUNT(*) AS n FROM items WHERE category_id = ?", (category_id,)
+        ).fetchone()["n"]
+        if move_to is not None:
+            if move_to == category_id or _category_row(conn, move_to) is None:
+                raise HTTPException(status_code=422, detail=f"Invalid move_to category {move_to}")
+            conn.execute(
+                "UPDATE items SET category_id = ? WHERE category_id = ?", (move_to, category_id)
+            )
+        elif in_use:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"{in_use} item(s) still use this category — pass ?move_to=<id> to reassign "
+                    "them, or move them off it first"
+                ),
+            )
+        conn.execute("DELETE FROM categories WHERE id = ?", (category_id,))
+
+
+# --- per-item edits ----------------------------------------------------------
+
+
+@router.patch("/items/{item_id}", response_model=Item)
+async def update_item_category(
+    item_id: int,
+    body: ItemCategoryUpdateRequest,
+    config: Config = Depends(get_config_dependency),
+) -> Item:
+    """Set (or clear, with `category_id: null`) an item's category. A manual
+    assignment is marked `source='manual'` / `confidence=1.0` and is never
+    overwritten by the automatic classifier."""
+    with session_scope(config) as conn:
+        if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+        if body.category_id is not None and _category_row(conn, body.category_id) is None:
+            raise HTTPException(
+                status_code=422, detail=f"Category {body.category_id} does not exist"
+            )
+
+        if body.category_id is None:
+            conn.execute(
+                "UPDATE items SET category_id = NULL, category_source = NULL, "
+                "category_confidence = NULL, category_reason = NULL, "
+                "category_updated_at = datetime('now') WHERE id = ?",
+                (item_id,),
+            )
+        else:
+            conn.execute(
+                "UPDATE items SET category_id = ?, category_source = 'manual', "
+                "category_confidence = 1.0, category_reason = NULL, "
+                "category_updated_at = datetime('now') WHERE id = ?",
+                (body.category_id, item_id),
+            )
+
+        row = conn.execute(f"{_ITEM_SELECT} WHERE items.id = ?", (item_id,)).fetchone()
+        item = _row_to_item(conn, row)
+    return item
 
 
 @router.patch("/items/{item_id}/tags", response_model=Item)
