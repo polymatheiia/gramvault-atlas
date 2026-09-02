@@ -273,7 +273,33 @@ class TestSaveVaultPath:
         response = export_client_with_config_file.post("/api/export/vault-path", json={"vault_dir": None})
         assert response.status_code == 200
 
-        text = config_yaml_file.read_text(encoding="utf-8")
-        assert "obsidian_vault_dir: null" in text
         assert response.status_code == 200
         assert response.json()["valid"] is True
+
+        text = config_yaml_file.read_text(encoding="utf-8")
+        assert "obsidian_vault_dir: null" in text
+
+
+class TestExportSettings:
+    def test_get_returns_defaults(self, export_client: TestClient) -> None:
+        body = export_client.get("/api/export/settings").json()
+        assert body["layout"] == "flat"
+        assert body["media_mode"] == "copy"
+        assert body["vault_configured"] is True
+
+    def test_put_persists_layout_and_preserves_comments(
+        self, export_client_with_config_file: TestClient, config_yaml_file: Path
+    ) -> None:
+        res = export_client_with_config_file.put(
+            "/api/export/settings", json={"layout": "by-category"}
+        )
+        assert res.status_code == 200
+        assert res.json()["layout"] == "by-category"
+
+        text = config_yaml_file.read_text(encoding="utf-8")
+        assert "# a user comment" in text
+        assert yaml.safe_load(text)["export"]["layout"] == "by-category"
+
+    def test_put_rejects_bad_layout(self, export_client_with_config_file: TestClient) -> None:
+        res = export_client_with_config_file.put("/api/export/settings", json={"layout": "nonsense"})
+        assert res.status_code == 422

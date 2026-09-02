@@ -450,3 +450,36 @@ def save_obsidian_vault_dir(vault_dir: str | None, config_path: Path) -> Config:
     # directly rather than relying on discovery.
     get_config.cache_clear()
     return load_config(config_path)
+
+
+def save_export_settings(
+    config_path: Path, *, layout: str | None = None, media_mode: str | None = None
+) -> Config:
+    """Persist `export.layout` / `export.media_mode` to `config_path` with
+    the same targeted line-rewrite approach as `save_obsidian_vault_dir`
+    (keeps the file's comments). Adds an `export:` block if absent."""
+    text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    has_export_block = bool(re.search(r"^export:\s*$", text, re.MULTILINE))
+
+    for key, value in (("layout", layout), ("media_mode", media_mode)):
+        if value is None:
+            continue
+        new_line = f"  {key}: {value}"
+        line_pattern = re.compile(rf"^  {key}:.*$", re.MULTILINE)
+        if has_export_block and line_pattern.search(text):
+            text = line_pattern.sub(lambda _, repl=new_line: repl, text, count=1)
+        elif has_export_block:
+            text = re.sub(
+                r"^export:\s*$",
+                lambda _, repl=new_line: f"export:\n{repl}",
+                text,
+                count=1,
+                flags=re.MULTILINE,
+            )
+        else:
+            text = text.rstrip("\n") + f"\n\nexport:\n{new_line}\n"
+            has_export_block = True
+
+    config_path.write_text(text, encoding="utf-8")
+    get_config.cache_clear()
+    return load_config(config_path)

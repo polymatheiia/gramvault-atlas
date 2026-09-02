@@ -354,6 +354,19 @@ export interface DigestCreateResponse {
   item_count: number
 }
 
+export interface DigestExportResponse {
+  path: string
+}
+
+export type ExportLayout = 'flat' | 'by-category' | 'by-date'
+
+export interface ExportSettings {
+  layout: ExportLayout
+  media_mode: 'copy' | 'link'
+  default_vault_subfolder: string
+  vault_configured: boolean
+}
+
 export interface Digest {
   id: number | null
   name: string

@@ -3,7 +3,9 @@ import { api } from '../api/client'
 import type {
   AiTask,
   ExportJobStatus,
+  ExportLayout,
   ExportRequest,
+  ExportSettings,
   Job,
   JobStartResponse,
   ModelsOverview,
@@ -42,6 +44,24 @@ export function Settings() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+
+  const [layout, setLayout] = useState<ExportLayout>('flat')
+
+  useEffect(() => {
+    api
+      .get<ExportSettings>('/api/export/settings')
+      .then((s) => setLayout(s.layout))
+      .catch(() => undefined)
+  }, [])
+
+  async function saveLayout(next: ExportLayout) {
+    setLayout(next)
+    try {
+      await api.put<ExportSettings>('/api/export/settings', { layout: next })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save layout')
+    }
+  }
 
   async function validate() {
     setValidating(true)
@@ -136,6 +156,23 @@ export function Settings() {
             value={subfolder}
             onChange={(e) => setSubfolder(e.target.value)}
           />
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="label">Note layout</span>
+          <span className="text-xs text-slate-500">
+            How notes are foldered. Changing this moves notes on the next export; your notes below the{' '}
+            <code>%% gramvault:end %%</code> marker are always kept.
+          </span>
+          <select
+            className="input w-auto"
+            value={layout}
+            onChange={(e) => void saveLayout(e.target.value as ExportLayout)}
+          >
+            <option value="flat">Flat — one folder</option>
+            <option value="by-category">By category — {'<category>/<note>'}</option>
+            <option value="by-date">By date — {'<YYYY-MM>/<note>'}</option>
+          </select>
         </label>
 
         <div className="flex gap-2">

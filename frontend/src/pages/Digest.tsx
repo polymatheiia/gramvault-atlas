@@ -4,6 +4,7 @@ import type {
   CategoryListResponse,
   Digest as DigestRow,
   DigestCreateResponse,
+  DigestExportResponse,
   DigestPreflightResponse,
   DigestTemplateInfo,
   Job,
@@ -59,6 +60,8 @@ export function Digest() {
   const [jobBar, setJobBar] = useState<{ step: number; total: number } | null>(null)
 
   const [current, setCurrent] = useState<DigestRow | null>(null)
+  const [exportedPath, setExportedPath] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
   const [tick, setTick] = useState(0)
   const activeIdRef = useRef<number | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -154,6 +157,7 @@ export function Digest() {
     setError(null)
     setBusy(true)
     setCurrent(null)
+    setExportedPath(null)
     try {
       const res = await api.post<DigestCreateResponse>('/api/digests', {
         template,
@@ -182,10 +186,28 @@ export function Digest() {
 
   async function openDigest(id: number) {
     setError(null)
+    setExportedPath(null)
     try {
       setCurrent(await api.get<DigestRow>(`/api/digests/${id}`))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load digest')
+    }
+  }
+
+  async function exportToVault(id: number) {
+    setError(null)
+    setExporting(true)
+    try {
+      const res = await api.post<DigestExportResponse>(`/api/digests/${id}/export`)
+      setExportedPath(res.path)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 400) {
+        setError('Configure an Obsidian vault in Settings first.')
+      } else {
+        setError(err instanceof Error ? err.message : 'Export failed')
+      }
+    } finally {
+      setExporting(false)
     }
   }
 
@@ -331,16 +353,31 @@ export function Digest() {
             <div className="flex items-center gap-3 text-xs text-slate-500">
               <span className={STATUS_STYLES[current.status] ?? ''}>{current.status}</span>
               {current.markdown && (
-                <button
-                  type="button"
-                  className="text-accent no-underline hover:underline"
-                  onClick={() => downloadMarkdown(current.name, current.markdown ?? '')}
-                >
-                  Download .md
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="text-accent no-underline hover:underline"
+                    onClick={() => downloadMarkdown(current.name, current.markdown ?? '')}
+                  >
+                    Download .md
+                  </button>
+                  {current.id != null && (
+                    <button
+                      type="button"
+                      className="text-accent no-underline hover:underline disabled:opacity-50"
+                      disabled={exporting}
+                      onClick={() => void exportToVault(current.id as number)}
+                    >
+                      {exporting ? 'Exporting…' : 'Export to Obsidian'}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
+          {exportedPath && (
+            <p className="text-xs text-emerald-400">Written to {exportedPath}</p>
+          )}
           {current.model && (
             <p className="text-xs text-slate-500">
               {current.provider} / {current.model} ·{' '}

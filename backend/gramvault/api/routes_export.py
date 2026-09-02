@@ -25,12 +25,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from gramvault.api.deps import get_config_dependency, get_config_path_dependency
-from gramvault.config import Config, save_obsidian_vault_dir
+from gramvault.config import Config, save_export_settings, save_obsidian_vault_dir
 from gramvault.db.session import session_scope
 from gramvault.export.exporter import (
     ExportResult,
@@ -248,6 +249,48 @@ async def validate_vault_path(
     if not path.is_dir():
         return VaultPathCheckResponse(valid=False, reason=f"Path is not a directory: {path}")
     return VaultPathCheckResponse(valid=True, reason=None)
+
+
+class ExportSettings(BaseModel):
+    layout: Literal["flat", "by-category", "by-date"]
+    media_mode: Literal["copy", "link"]
+    default_vault_subfolder: str
+    vault_configured: bool
+
+
+class ExportSettingsUpdate(BaseModel):
+    layout: Literal["flat", "by-category", "by-date"] | None = None
+    media_mode: Literal["copy", "link"] | None = None
+
+
+@router.get("/settings", response_model=ExportSettings)
+async def get_export_settings(
+    config: Config = Depends(get_config_dependency),
+) -> ExportSettings:
+    return ExportSettings(
+        layout=config.export.layout,
+        media_mode=config.export.media_mode,
+        default_vault_subfolder=config.export.default_vault_subfolder,
+        vault_configured=config.resolved_obsidian_vault_dir is not None,
+    )
+
+
+@router.put("/settings", response_model=ExportSettings)
+async def update_export_settings(
+    body: ExportSettingsUpdate,
+    config_path: Path = Depends(get_config_path_dependency),
+) -> ExportSettings:
+    """Persist `export.layout` / `export.media_mode` into config.yaml. A
+    layout change takes effect on the next export (notes are moved)."""
+    config = save_export_settings(
+        config_path, layout=body.layout, media_mode=body.media_mode
+    )
+    return ExportSettings(
+        layout=config.export.layout,
+        media_mode=config.export.media_mode,
+        default_vault_subfolder=config.export.default_vault_subfolder,
+        vault_configured=config.resolved_obsidian_vault_dir is not None,
+    )
 
 
 @router.post("/vault-path", response_model=VaultPathCheckResponse)
