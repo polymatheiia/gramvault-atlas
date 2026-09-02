@@ -48,6 +48,12 @@ include = ["gramvault*"]
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 pythonpath = ["backend"]
+# The classifier accuracy benchmark is slow, needs a local hand-labelled
+# dataset, and (for the LLM pass) costs money — opt in with `pytest -m eval`.
+addopts = "-m 'not eval'"
+markers = [
+    "eval: classifier accuracy benchmark against the reels-workflow labels (see backend/tests/eval/)",
+]
 
 # --- ruff ---
 [tool.ruff]

@@ -46,3 +46,6 @@ config.yaml
 
 # --- Provider API keys + auth token — never commit ---
 secrets.yaml
+
+# --- Classifier eval dataset is real personal data — never commit ---
+backend/tests/eval/data/
