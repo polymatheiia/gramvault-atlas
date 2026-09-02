@@ -85,6 +85,8 @@ export interface Item {
   category: string | null
   category_source: CategorySource | null
   category_confidence: number | null
+  /** Why the classifier chose this category (keyword hits or LLM rationale). */
+  category_reason: string | null
   tags: Tag[]
   media_files: MediaFile[]
 }
@@ -282,6 +284,31 @@ export interface EnrichmentProgress {
   done: number
   failed: number
   steps: Record<EnrichStepName, StepProgress>
+  job_id: number | null
+}
+
+// --- categorize (POST /api/categorize/run, GET /api/categorize/progress) ---
+
+export type CategorizeMethod = 'keyword' | 'llm' | 'keyword_then_llm'
+export type CategorizeScopeName = 'uncategorized' | 'needs_review' | 'all'
+
+export interface CategorizeRunRequest {
+  scope?: CategorizeScopeName | { item_ids: number[] }
+  method?: CategorizeMethod
+}
+
+export interface CategorizeRunResponse {
+  queued_count: number
+  /** The `jobs` row tracking this run — poll GET /api/jobs/{job_id}. */
+  job_id: number | null
+}
+
+export interface CategorizeProgress {
+  total: number
+  categorized: number
+  uncategorized: number
+  needs_review: number
+  by_source: Record<string, number>
   job_id: number | null
 }
 
