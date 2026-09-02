@@ -312,6 +312,68 @@ export interface CategorizeProgress {
   job_id: number | null
 }
 
+// --- digests (/api/digests*) ---
+
+export interface DigestTemplateInfo {
+  name: string
+  description: string
+  extract_prompt: string
+  reduce_prompt: string
+  version: string
+  source: 'builtin' | 'user'
+  default_task: string
+}
+
+export interface DigestSelectionRequest {
+  category?: string | null
+  query?: string | null
+  item_ids?: number[] | null
+}
+
+export interface DigestPreflightRequest extends DigestSelectionRequest {
+  template: string
+}
+
+export interface DigestPreflightResponse {
+  item_count: number
+  batches: number
+  estimated_tokens_in: number
+  estimated_tokens_out: number
+  estimated_cost: number | null
+  provider: string
+  model: string
+}
+
+export interface DigestCreateRequest extends DigestPreflightRequest {
+  name?: string | null
+}
+
+export interface DigestCreateResponse {
+  digest_id: number
+  job_id: number
+  item_count: number
+}
+
+export interface Digest {
+  id: number | null
+  name: string
+  template: string
+  template_version: string | null
+  status: JobStatus
+  selection: Record<string, unknown>
+  item_ids: number[]
+  provider: string | null
+  model: string | null
+  tokens_in: number
+  tokens_out: number
+  cost_estimate: number | null
+  markdown: string | null
+  error_message: string | null
+  job_id: number | null
+  created_at: string | null
+  finished_at: string | null
+}
+
 export interface ChatSessionCreateRequest {
   title: string | null
 }

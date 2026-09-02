@@ -3,6 +3,7 @@ import { AuthGate } from './components/AuthGate'
 import { NavBar } from './components/NavBar'
 import { Categorize } from './pages/Categorize'
 import { Chat } from './pages/Chat'
+import { Digest } from './pages/Digest'
 import { Enrich } from './pages/Enrich'
 import { Gallery } from './pages/Gallery'
 import { Import } from './pages/Import'
@@ -27,6 +28,7 @@ function App() {
               <Route path="/import" element={<Import />} />
               <Route path="/enrich" element={<Enrich />} />
               <Route path="/categorize" element={<Categorize />} />
+              <Route path="/digest" element={<Digest />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

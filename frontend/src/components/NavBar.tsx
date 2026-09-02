@@ -6,6 +6,7 @@ const LINKS = [
   { to: '/import', label: 'Import', end: false },
   { to: '/enrich', label: 'Enrich', end: false },
   { to: '/categorize', label: 'Categorize', end: false },
+  { to: '/digest', label: 'Digest', end: false },
   { to: '/settings', label: 'Settings', end: false },
 ]
 
