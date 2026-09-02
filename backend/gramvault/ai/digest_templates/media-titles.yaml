@@ -1,0 +1,27 @@
+name: media-titles
+version: "1"
+default_task: digest
+description: >
+  Pull every film / TV / anime recommendation out of a set of posts into
+  one watchlist grouped by kind. Best run over the movies/tv/anime
+  category.
+
+extract_prompt: >
+  Each post below may recommend one or more films, TV series, or anime.
+  Extract every distinct title. Capture the release year only if it is
+  stated or unambiguous. Do not invent titles. Summarise non-English
+  posts in English.
+
+extract_schema:
+  - title: "Perfect Blue"
+    kind: "anime"          # film | tv | anime
+    year: 1997
+    note: "psychological thriller, recommended alongside Paprika"
+    item_id: 123
+
+reduce_prompt: >
+  Merge into one Markdown watchlist. Top-level `## ` headings by kind
+  (Films, TV, Anime). One bullet per title:
+  `- **Title** (year) — short note [[item:<id>]]`. Deduplicate by title,
+  citing every post that named it. End with `## Unclear` for any title you
+  could not confirm.

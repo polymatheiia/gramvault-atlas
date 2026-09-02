@@ -457,6 +457,73 @@ def categorize_command(
         typer.echo(f"  {name:20s} {count}")
 
 
+@app.command(name="digest")
+def digest_command(
+    template: str = typer.Argument(..., help="Template name (see `ai/digest_templates/`)"),
+    category: str | None = typer.Option(None, help="Digest every item in this category"),
+    query: str | None = typer.Option(None, help="Digest the semantic-search hits for this query"),
+    name: str | None = typer.Option(None, help="Name for the digest (defaults to template + count)"),
+    out: Path | None = typer.Option(None, help="Write the Markdown here (default: stdout)"),
+) -> None:
+    """Generate a Markdown recommendation/notes doc (the reels-workflow §D
+    map/reduce step). Runs synchronously and needs the `digest` provider
+    ready; the result is also saved to the `digests` table.
+    """
+    import asyncio
+    import json as _json
+
+    from gramvault.ai import digest as digest_engine
+    from gramvault.db.session import session_scope
+
+    config = get_config()
+    selection = digest_engine.Selection(category=category, query=query)
+
+    async def run() -> str:
+        with session_scope(config) as conn:
+            item_ids = await digest_engine.select_items(conn, selection, config)
+        if not item_ids:
+            raise RuntimeError("the selection matched no items")
+        tmpl = digest_engine.get_template(template, config)
+        digest_name = (name or "").strip() or f"{tmpl.name} — {len(item_ids)} items"
+        with session_scope(config) as conn:
+            cursor = conn.execute(
+                "INSERT INTO digests (name, template, template_version, status, "
+                "selection_json, item_ids_json) VALUES (?, ?, ?, 'pending', ?, ?)",
+                (
+                    digest_name,
+                    tmpl.name,
+                    tmpl.version,
+                    _json.dumps(selection.to_json()),
+                    _json.dumps(item_ids),
+                ),
+            )
+            digest_id = cursor.lastrowid
+        typer.echo(f"Digesting {len(item_ids)} item(s) with '{tmpl.name}'…", err=True)
+        summary = await digest_engine.run_digest(digest_id, config)
+        typer.echo(
+            f"Done: digest #{digest_id}, {summary['entries']} entries, "
+            f"~{summary['tokens_in'] + summary['tokens_out']} tokens.",
+            err=True,
+        )
+        with session_scope(config) as conn:
+            row = conn.execute(
+                "SELECT markdown FROM digests WHERE id = ?", (digest_id,)
+            ).fetchone()
+        return row["markdown"] or ""
+
+    try:
+        markdown = asyncio.run(run())
+    except Exception as exc:  # noqa: BLE001 - surface as a clean CLI error
+        typer.echo(f"Error: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    if out:
+        out.write_text(markdown, encoding="utf-8")
+        typer.echo(f"Wrote {out}", err=True)
+    else:
+        typer.echo(markdown)
+
+
 @app.command(name="migrate")
 def migrate_command(
     status_only: bool = typer.Option(

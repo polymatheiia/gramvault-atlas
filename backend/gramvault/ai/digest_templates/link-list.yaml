@@ -1,0 +1,25 @@
+name: link-list
+version: "1"
+default_task: digest
+description: >
+  Collect websites, apps, tools and services mentioned across a set of
+  posts into one categorised list. Best run over the websites category.
+
+extract_prompt: >
+  Each post below mentions one or more websites, apps, browser
+  extensions, or online services. Extract each distinct one. Capture the
+  URL or handle only if it actually appears in the post — otherwise leave
+  it null, don't guess a domain. Say what it's for in a few words.
+
+extract_schema:
+  - name: "Anna's Archive"
+    url: "annas-archive.org"
+    category: "books & reading"
+    what_for: "search shadow libraries for a title across sources"
+    item_id: 123
+
+reduce_prompt: >
+  Merge into one Markdown list grouped under `## ` category headings.
+  One bullet per tool: `- **Name** — what it's for — `url` if known
+  [[item:<id>]]`. Deduplicate by name. Put anything uncategorisable under
+  `## Misc`. No preamble.

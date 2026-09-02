@@ -1,0 +1,31 @@
+name: linked-findings
+version: "1"
+default_task: digest
+description: >
+  Turn a set of research/science posts into a linked list of claims —
+  study, authors, journal, and a paper link where identifiable. Every
+  entry is marked with how well the source is pinned down.
+
+extract_prompt: >
+  Each post below reports a scientific claim, study, or data-driven
+  finding. For each distinct claim, extract what is asserted and whatever
+  source detail is present (study name, authors, journal, year, a DOI or
+  URL). Never fabricate a citation — if the post just says "studies show",
+  record the claim with source fields null and confidence "unverified".
+
+extract_schema:
+  - claim: "creatine 5 g/day modestly improves working memory in vegetarians"
+    study: "Rae et al."
+    journal: "Proc. Biol. Sci."
+    year: 2003
+    url: null
+    confidence: "named"      # named | partial | unverified
+    item_id: 123
+
+reduce_prompt: >
+  Merge into one Markdown document grouped under `## ` topic headings.
+  One bullet per claim: `- **Claim.** Source (year), link if known —
+  _confidence_ [[item:<id>]]`. Deduplicate claims, citing every post.
+  Never present an unverified claim as sourced. Put a short
+  `> Unverified — no citation in the post.` under any bullet with
+  confidence "unverified". No preamble.

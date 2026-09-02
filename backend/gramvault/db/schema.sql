@@ -195,3 +195,31 @@ CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 -- At most one active (pending/running) job per kind, enforced in the DB.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_one_active_per_kind
     ON jobs(kind) WHERE status IN ('pending', 'running');
+
+-- Saved digests: a Markdown doc distilled from a selection of items via a
+-- template by the map/reduce engine in `gramvault.ai.digest`. Mirror of
+-- migration 004_digests.py — keep the two in sync. Each run is its own
+-- row (history/diff, never overwritten); `item_ids_json` snapshots the
+-- exact selection so the digest stays reproducible.
+CREATE TABLE IF NOT EXISTS digests (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    name              TEXT NOT NULL,
+    template          TEXT NOT NULL,
+    template_version  TEXT,
+    status            TEXT NOT NULL DEFAULT 'pending'
+                       CHECK (status IN ('pending', 'running', 'done', 'failed', 'cancelled')),
+    selection_json    TEXT NOT NULL,
+    item_ids_json     TEXT NOT NULL DEFAULT '[]',
+    provider          TEXT,
+    model             TEXT,
+    tokens_in         INTEGER NOT NULL DEFAULT 0,
+    tokens_out        INTEGER NOT NULL DEFAULT 0,
+    cost_estimate     REAL,
+    markdown          TEXT,
+    error_message     TEXT,
+    job_id            INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_digests_created_at ON digests(created_at);

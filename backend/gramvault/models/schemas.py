@@ -233,6 +233,63 @@ class Job(ORMBase):
         )
 
 
+class Digest(ORMBase):
+    """A row in the `digests` table. `selection` / `item_ids` are surfaced
+    as parsed objects; build one from a `sqlite3.Row` with
+    `Digest.from_row(row)`, not `model_validate`."""
+
+    id: int | None = None
+    name: str
+    template: str
+    template_version: str | None = None
+    status: JobStatus = JobStatus.PENDING
+    selection: dict[str, Any] = Field(default_factory=dict)
+    item_ids: list[int] = Field(default_factory=list)
+    provider: str | None = None
+    model: str | None = None
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_estimate: float | None = None
+    markdown: str | None = None
+    error_message: str | None = None
+    job_id: int | None = None
+    created_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    @classmethod
+    def from_row(cls, row: Any) -> Digest:
+        data = dict(row)
+
+        def _loads(key: str, fallback: Any) -> Any:
+            raw = data.get(key)
+            if not raw:
+                return fallback
+            try:
+                return json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return fallback
+
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            template=data["template"],
+            template_version=data.get("template_version"),
+            status=data["status"],
+            selection=_loads("selection_json", {}),
+            item_ids=_loads("item_ids_json", []),
+            provider=data.get("provider"),
+            model=data.get("model"),
+            tokens_in=data.get("tokens_in") or 0,
+            tokens_out=data.get("tokens_out") or 0,
+            cost_estimate=data.get("cost_estimate"),
+            markdown=data.get("markdown"),
+            error_message=data.get("error_message"),
+            job_id=data.get("job_id"),
+            created_at=data.get("created_at"),
+            finished_at=data.get("finished_at"),
+        )
+
+
 class ChatCitation(ORMBase):
     id: int | None = None
     message_id: int | None = None

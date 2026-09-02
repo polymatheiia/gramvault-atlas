@@ -1,0 +1,32 @@
+name: book-titles
+version: "1"
+default_task: digest
+description: >
+  Pull every book / manga / series recommendation out of a set of posts
+  into one reading list, grouped by theme. Best run over the books/manga
+  category.
+
+extract_prompt: >
+  Each post below may recommend one or more books, manga, or series (in a
+  caption, an on-screen list, or narration). Extract every distinct title
+  you can identify. Fix obvious transcription errors in author/title.
+  Ignore posts that recommend nothing. Never invent a title or author —
+  if you are unsure of the author, leave it null.
+
+extract_schema:
+  - title: "The Body Keeps the Score"
+    author: "Bessel van der Kolk"
+    kind: "book"          # book | manga | series
+    theme: "trauma & the nervous system"
+    note: "recommended for complex PTSD"
+    item_id: 123
+
+reduce_prompt: >
+  Merge the extracted entries into one Markdown reading list. Deduplicate
+  by title+author (case-insensitive, tolerant of transcription noise).
+  Group under `## ` theme headings, ordered from most to least common
+  theme. Within a group, one bullet per title:
+  `- **Title** — Author — short note [[item:<id>]]`. If several posts
+  recommend the same title, keep one bullet and cite all of them.
+  End with a `## Still unresolved` section listing any entry whose title
+  you could not pin down, with its `[[item:<id>]]`.

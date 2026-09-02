@@ -44,6 +44,13 @@ package-dir = { "" = "backend" }
 where = ["backend"]
 include = ["gramvault*"]
 
+[tool.setuptools.package-data]
+gramvault = [
+    "db/schema.sql",
+    "db/migrations/*.sql",
+    "ai/digest_templates/*.yaml",
+]
+
 # --- pytest ---
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

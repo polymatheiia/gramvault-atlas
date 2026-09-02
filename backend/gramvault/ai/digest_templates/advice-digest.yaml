@@ -1,0 +1,29 @@
+name: advice-digest
+version: "1"
+default_task: digest
+description: >
+  Distill actionable advice from a set of posts into themed notes —
+  built for psychology, lifehacks, beauty, workouts. One technique per
+  entry, phrased so you could act on it without watching the reel.
+
+extract_prompt: >
+  Each post below gives practical advice (a technique, a tip, a protocol,
+  a reframe). Extract each distinct piece of advice as its own entry.
+  Summarise non-English posts in English. Skip posts that are pure
+  storytelling, promotion, or a product plug with no method. Keep the
+  detail concrete — numbers, steps, dosages, timing — don't flatten it to
+  a platitude.
+
+extract_schema:
+  - theme: "nervous system regulation"
+    technique: "physiological sigh"
+    detail: "two inhales through the nose, one long exhale through the mouth; 1-3 rounds to drop acute stress"
+    item_id: 123
+
+reduce_prompt: >
+  Merge the entries into one Markdown notes document. Group under `## `
+  theme headings, most-covered theme first. Within a theme, one bullet per
+  technique: `- **Technique** — the how, in one or two sentences
+  [[item:<id>]]`. Merge near-duplicate techniques into a single bullet
+  citing every source. Drop anything that on reflection carries no
+  takeaway. No preamble, start at the first heading.

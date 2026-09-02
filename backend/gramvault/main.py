@@ -24,6 +24,7 @@ from gramvault.api import (
     jobs,
     routes_categorize,
     routes_chat,
+    routes_digests,
     routes_enrich,
     routes_export,
     routes_import,
@@ -115,6 +116,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(routes_library.router)
     app.include_router(routes_enrich.router)
     app.include_router(routes_categorize.router)
+    app.include_router(routes_digests.router)
     app.include_router(routes_jobs.router)
     app.include_router(routes_models.router)
     app.include_router(routes_chat.router)
