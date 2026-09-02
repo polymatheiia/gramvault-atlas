@@ -17,9 +17,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gramvault.api.deps import get_config_dependency
-from gramvault.config import Config, PathsConfig
+from gramvault.config import Config, PathsConfig, get_config
 from gramvault.db.session import get_connection, init_db
 from gramvault.main import create_app
+
+
+@pytest.fixture(autouse=True)
+def _clear_config_cache() -> Iterator[None]:
+    """`get_config()` is an lru_cache singleton. A test that points
+    `GRAMVAULT_CONFIG_PATH` at a tmp file (e.g. the auth-token tests)
+    would otherwise leak that config into later tests via the cache."""
+    get_config.cache_clear()
+    yield
+    get_config.cache_clear()
 
 
 @pytest.fixture

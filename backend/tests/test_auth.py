@@ -1,0 +1,68 @@
+"""Bearer-token middleware (`gramvault.api.auth`)."""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+
+import pytest
+from fastapi.testclient import TestClient
+
+from gramvault import config as config_module
+from gramvault.api.deps import get_config_dependency
+from gramvault.config import Config, PathsConfig
+from gramvault.main import create_app
+
+
+@pytest.fixture
+def token_client(tmp_path, monkeypatch) -> Iterator[TestClient]:
+    """A client whose `get_config()` (the global the middleware reads)
+    resolves to a config.yaml with `auth.token` set to 'sekret'."""
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "auth:\n  token: sekret\n"
+        f"paths:\n  db_path: {tmp_path / 'gv.db'}\n"
+        f"  library_dir: {tmp_path / 'lib'}\n"
+        f"  chroma_dir: {tmp_path / 'chroma'}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(config_module.CONFIG_PATH_ENV_VAR, str(cfg_path))
+    # conftest's autouse _clear_config_cache already busts the lru_cache
+    # around this test, so the middleware's get_config() picks up cfg_path.
+
+    tmp_cfg = Config(
+        paths=PathsConfig(
+            library_dir=str(tmp_path / "lib"),
+            db_path=str(tmp_path / "gv.db"),
+            chroma_dir=str(tmp_path / "chroma"),
+        )
+    )
+    app = create_app(tmp_cfg)
+    app.dependency_overrides[get_config_dependency] = lambda: tmp_cfg
+    with TestClient(app) as client:
+        yield client
+
+
+def test_health_is_open_without_a_token(token_client: TestClient) -> None:
+    assert token_client.get("/api/health").status_code == 200
+
+
+def test_protected_endpoint_needs_the_token(token_client: TestClient) -> None:
+    assert token_client.get("/api/library/categories").status_code == 401
+    assert token_client.get("/api/jobs").status_code == 401
+    assert token_client.get("/media/anything.jpg").status_code == 401
+
+
+def test_correct_bearer_token_is_accepted(token_client: TestClient) -> None:
+    r = token_client.get("/api/library/categories", headers={"Authorization": "Bearer sekret"})
+    assert r.status_code == 200
+
+
+def test_wrong_token_is_rejected(token_client: TestClient) -> None:
+    r = token_client.get("/api/jobs", headers={"Authorization": "Bearer nope"})
+    assert r.status_code == 401
+    assert "token" in r.json()["detail"].lower()
+
+
+def test_no_token_configured_is_a_noop(client: TestClient) -> None:
+    # The default `client` fixture's config has no auth block.
+    assert client.get("/api/jobs").status_code == 200

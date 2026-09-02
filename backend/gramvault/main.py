@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from gramvault.api import (
+    auth,
     jobs,
     routes_chat,
     routes_enrich,
@@ -101,6 +102,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    # Bearer-token gate on /api/* + /media/* — a no-op unless
+    # `config.auth.token` is set (see gramvault.api.auth). Added
+    # unconditionally so setting the token via the API needs no restart.
+    app.add_middleware(auth.BearerAuthMiddleware)
 
     app.state.config = config
 

@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { AuthGate } from './components/AuthGate'
 import { NavBar } from './components/NavBar'
 import { Chat } from './pages/Chat'
 import { Gallery } from './pages/Gallery'
@@ -13,19 +14,21 @@ function NotFound() {
 function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-surface text-slate-100">
-        <NavBar />
-        <main>
-          <Routes>
-            <Route path="/" element={<Gallery />} />
-            <Route path="/items/:id" element={<ItemDetail />} />
-            <Route path="/chat" element={<Chat />} />
-            <Route path="/import" element={<Import />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </main>
-      </div>
+      <AuthGate>
+        <div className="min-h-screen bg-surface text-slate-100">
+          <NavBar />
+          <main>
+            <Routes>
+              <Route path="/" element={<Gallery />} />
+              <Route path="/items/:id" element={<ItemDetail />} />
+              <Route path="/chat" element={<Chat />} />
+              <Route path="/import" element={<Import />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </main>
+        </div>
+      </AuthGate>
     </BrowserRouter>
   )
 }

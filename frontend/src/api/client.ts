@@ -15,6 +15,39 @@ import type { ChatCitation } from '../types'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
+// --- optional bearer token (matches gramvault.api.auth) ---
+const TOKEN_KEY = 'gv_token'
+
+export function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setAuthToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token)
+    else localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* private mode / storage disabled — token just won't persist */
+  }
+}
+
+let onUnauthorized: (() => void) | null = null
+
+/** Register a callback fired whenever the API answers 401 (the server has
+ * `auth.token` set and ours is missing/wrong). */
+export function setUnauthorizedHandler(fn: (() => void) | null): void {
+  onUnauthorized = fn
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getAuthToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
 export class ApiError extends Error {
   status: number
   detail: unknown
@@ -50,6 +83,7 @@ function buildUrl(path: string, params?: Record<string, unknown>): string {
 }
 
 async function parseResponse<T>(res: Response): Promise<T> {
+  if (res.status === 401) onUnauthorized?.()
   if (res.status === 204) return undefined as T
   const text = await res.text()
   const body = text ? JSON.parse(text) : undefined
@@ -71,7 +105,10 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const { method = 'GET', params, body, signal } = options
   const res = await fetch(buildUrl(path, params), {
     method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: {
+      ...authHeaders(),
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal,
   })
@@ -101,6 +138,8 @@ export async function uploadFile<T>(
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', buildUrl(path))
+    const token = getAuthToken()
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.upload.onprogress = (evt) => {
       if (onProgress && evt.lengthComputable) {
         onProgress(Math.round((evt.loaded / evt.total) * 100))
@@ -172,7 +211,7 @@ export async function streamChatMessage(
   try {
     res = await fetch(buildUrl(`/api/chat/sessions/${sessionId}/messages`), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ content }),
       signal,
     })
