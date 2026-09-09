@@ -104,9 +104,7 @@ async def run_categorize(
                 params={"count": len(item_ids), "method": body.method},
             )
         except jobs.JobConflict as exc:
-            raise HTTPException(
-                status_code=409, detail="A categorize job is already running"
-            ) from exc
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     assert job.id is not None
     method = body.method

@@ -23,7 +23,7 @@ class TestList:
     def test_lists_newest_first_with_filters(self, client: TestClient, tmp_config: Config) -> None:
         a = _make(tmp_config, JobKind.ENRICH, "done")
         b = _make(tmp_config, JobKind.ENRICH, "pending")
-        _make(tmp_config, JobKind.DIGEST, "pending")
+        _make(tmp_config, JobKind.PULL, "pending")
 
         res = client.get("/api/jobs", params={"kind": "enrich"})
         assert res.status_code == 200

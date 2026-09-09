@@ -95,6 +95,22 @@ class TestCreate:
             )
         assert res.status_code == 409
 
+    def test_conflict_with_an_active_heavy_job_of_another_kind(
+        self, client: TestClient, tmp_config: Config
+    ) -> None:
+        _seed(tmp_config, "read Dune")
+        with session_scope(tmp_config) as conn:
+            jobs.create(conn, JobKind.ENRICH, params={})
+        with patch(
+            "gramvault.api.routes_digests.get_provider",
+            return_value=(AsyncMock(), "m"),
+        ):
+            res = client.post(
+                "/api/digests", json={"template": "book-titles", "category": "books/manga"}
+            )
+        assert res.status_code == 409
+        assert "enrich" in res.json()["detail"]
+
     def test_create_runs_job_and_writes_markdown(
         self, client: TestClient, tmp_config: Config
     ) -> None:

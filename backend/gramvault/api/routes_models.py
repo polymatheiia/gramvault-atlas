@@ -356,7 +356,7 @@ async def reembed_library(
         try:
             job = jobs.create(conn, JobKind.REEMBED, params={})
         except jobs.JobConflict as exc:
-            raise HTTPException(status_code=409, detail="A re-embed is already running") from exc
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         item_ids = [
             r["id"]
             for r in conn.execute(

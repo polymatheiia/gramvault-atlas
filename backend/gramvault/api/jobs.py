@@ -46,9 +46,20 @@ logger = logging.getLogger(__name__)
 
 _ACTIVE = (JobStatus.PENDING.value, JobStatus.RUNNING.value)
 
+# "Heavy" = model-bound: these all drive Ollama + faster-whisper hard and
+# must not overlap on a small box (INTEGRATION-PLAN.md §H2). Enforced in the
+# DB by the partial UNIQUE index `idx_jobs_one_active_heavy` (migration
+# 005) — keep this set identical to that index's kind list. `pull` /
+# `model_pull` are network-bound and may still run alongside anything.
+_HEAVY_KINDS = frozenset(
+    {JobKind.ENRICH, JobKind.CATEGORIZE, JobKind.DIGEST, JobKind.REEMBED}
+)
+
 
 class JobConflict(RuntimeError):
-    """Raised by `create()` when a job of the same kind is already active."""
+    """Raised by `create()` when a job of the same kind is already active,
+    or when a `_HEAVY_KINDS` job is requested while another heavy job runs.
+    The message names the blocking job's kind."""
 
 
 class JobNotFound(RuntimeError):
@@ -62,8 +73,11 @@ def create(
     conn: sqlite3.Connection, kind: JobKind, params: dict[str, Any] | None = None
 ) -> Job:
     """Insert a new `pending` job. Raises `JobConflict` if a job of the
-    same kind is already pending or running (enforced by the partial
-    UNIQUE index `idx_jobs_one_active_per_kind`)."""
+    same kind is already pending or running (partial UNIQUE index
+    `idx_jobs_one_active_per_kind`), or — for a `_HEAVY_KINDS` kind — if
+    any other heavy job is active (`idx_jobs_one_active_heavy`, migration
+    005). Both constraints are DB-enforced, so two racing requests can't
+    both slip through."""
     try:
         cursor = conn.execute(
             "INSERT INTO jobs (kind, status, params_json) VALUES (?, 'pending', ?)",
@@ -72,10 +86,32 @@ def create(
         conn.commit()
     except sqlite3.IntegrityError as exc:
         conn.rollback()
-        raise JobConflict(f"a {kind.value} job is already active") from exc
+        raise JobConflict(_conflict_reason(conn, kind)) from exc
     job = get(conn, cursor.lastrowid)
     assert job is not None  # just inserted
     return job
+
+
+def _conflict_reason(conn: sqlite3.Connection, kind: JobKind) -> str:
+    """Message for the `JobConflict` an INSERT just tripped — tells a
+    same-kind conflict apart from a cross-kind heavy-job one. Routes pass
+    this straight through as the 409 detail."""
+    if active(conn, kind) is not None:
+        return (
+            f"There's already a running {kind.value} job — wait for it to "
+            "finish or cancel it first."
+        )
+    blocker = active_heavy(conn)
+    if blocker is not None and blocker.kind != kind:
+        return (
+            f"There's already a running {blocker.kind.value} job — enrich, "
+            "categorize, digest and re-embed can't run at the same time on this "
+            "box. Wait for it to finish or cancel it first."
+        )
+    return (
+        f"There's already a running {kind.value} job — wait for it to finish "
+        "or cancel it first."
+    )
 
 
 def get(conn: sqlite3.Connection, job_id: int | None) -> Job | None:
@@ -113,6 +149,18 @@ def active(conn: sqlite3.Connection, kind: JobKind) -> Job | None:
         "SELECT * FROM jobs WHERE kind = ? AND status IN ('pending', 'running') "
         "ORDER BY id DESC LIMIT 1",
         (kind.value,),
+    ).fetchone()
+    return Job.from_row(row) if row is not None else None
+
+
+def active_heavy(conn: sqlite3.Connection) -> Job | None:
+    """The current pending/running `_HEAVY_KINDS` job, if any. At most one
+    can exist (`idx_jobs_one_active_heavy`)."""
+    placeholders = ", ".join("?" * len(_HEAVY_KINDS))
+    row = conn.execute(
+        f"SELECT * FROM jobs WHERE status IN ('pending', 'running') "
+        f"AND kind IN ({placeholders}) ORDER BY id DESC LIMIT 1",
+        tuple(k.value for k in _HEAVY_KINDS),
     ).fetchone()
     return Job.from_row(row) if row is not None else None
 

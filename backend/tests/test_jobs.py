@@ -37,7 +37,37 @@ class TestCreate:
 
     def test_different_kinds_do_not_conflict(self, tmp_db_conn: sqlite3.Connection) -> None:
         jobs.create(tmp_db_conn, JobKind.ENRICH)
-        jobs.create(tmp_db_conn, JobKind.CATEGORIZE)  # no raise
+        jobs.create(tmp_db_conn, JobKind.PULL)  # non-heavy: no raise
+
+    def test_two_heavy_kinds_conflict(self, tmp_db_conn: sqlite3.Connection) -> None:
+        jobs.create(tmp_db_conn, JobKind.ENRICH)
+        with pytest.raises(jobs.JobConflict, match="running enrich job"):
+            jobs.create(tmp_db_conn, JobKind.DIGEST)
+        # the blocked heavy job left no row behind
+        assert tmp_db_conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+
+    def test_heavy_job_allowed_alongside_network_bound_jobs(
+        self, tmp_db_conn: sqlite3.Connection
+    ) -> None:
+        jobs.create(tmp_db_conn, JobKind.PULL)
+        jobs.create(tmp_db_conn, JobKind.MODEL_PULL)
+        jobs.create(tmp_db_conn, JobKind.DIGEST)  # no raise
+
+    def test_heavy_lock_frees_when_the_holder_finishes(
+        self, tmp_db_conn: sqlite3.Connection
+    ) -> None:
+        first = jobs.create(tmp_db_conn, JobKind.CATEGORIZE)
+        with pytest.raises(jobs.JobConflict):
+            jobs.create(tmp_db_conn, JobKind.REEMBED)
+        tmp_db_conn.execute("UPDATE jobs SET status = 'done' WHERE id = ?", (first.id,))
+        tmp_db_conn.commit()
+        jobs.create(tmp_db_conn, JobKind.REEMBED)  # no raise
+
+    def test_active_heavy_reports_the_holder(self, tmp_db_conn: sqlite3.Connection) -> None:
+        assert jobs.active_heavy(tmp_db_conn) is None
+        jobs.create(tmp_db_conn, JobKind.ENRICH)
+        holder = jobs.active_heavy(tmp_db_conn)
+        assert holder is not None and holder.kind == JobKind.ENRICH
 
     def test_new_job_allowed_once_previous_finished(
         self, tmp_db_conn: sqlite3.Connection
@@ -150,10 +180,10 @@ class TestCancelAndReclaim:
 
     def test_reclaim_orphans_fails_active_jobs(self, tmp_db_conn: sqlite3.Connection) -> None:
         a = jobs.create(tmp_db_conn, JobKind.ENRICH)
-        b = jobs.create(tmp_db_conn, JobKind.DIGEST)
+        b = jobs.create(tmp_db_conn, JobKind.PULL)
         tmp_db_conn.execute("UPDATE jobs SET status = 'running' WHERE id = ?", (b.id,))
         tmp_db_conn.execute(
-            "INSERT INTO jobs (kind, status) VALUES ('pull', 'done')"
+            "INSERT INTO jobs (kind, status) VALUES ('model_pull', 'done')"
         )
         tmp_db_conn.commit()
 
@@ -173,11 +203,11 @@ class TestListing:
         j1 = jobs.create(tmp_db_conn, JobKind.ENRICH)
         tmp_db_conn.execute("UPDATE jobs SET status='done' WHERE id=?", (j1.id,))
         j2 = jobs.create(tmp_db_conn, JobKind.ENRICH)
-        jobs.create(tmp_db_conn, JobKind.DIGEST)
+        jobs.create(tmp_db_conn, JobKind.PULL)
         tmp_db_conn.commit()
 
         enrich = jobs.list_jobs(tmp_db_conn, kind=JobKind.ENRICH)
         assert [j.id for j in enrich] == [j2.id, j1.id]
 
         pending = jobs.list_jobs(tmp_db_conn, status=JobStatus.PENDING)
-        assert {j.kind for j in pending} == {JobKind.ENRICH, JobKind.DIGEST}
+        assert {j.kind for j in pending} == {JobKind.ENRICH, JobKind.PULL}

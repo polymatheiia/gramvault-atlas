@@ -196,6 +196,16 @@ CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_one_active_per_kind
     ON jobs(kind) WHERE status IN ('pending', 'running');
 
+-- At most one active "heavy" (model-bound) job across kinds — enrich,
+-- categorize, digest and reembed all hammer Ollama + faster-whisper, so
+-- they can't overlap on a small box (migration 005; keep the kind list in
+-- sync with jobs._HEAVY_KINDS). pull / model_pull are network-bound and
+-- may still overlap.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_one_active_heavy
+    ON jobs((1))
+    WHERE kind IN ('enrich', 'categorize', 'digest', 'reembed')
+      AND status IN ('pending', 'running');
+
 -- Saved digests: a Markdown doc distilled from a selection of items via a
 -- template by the map/reduce engine in `gramvault.ai.digest`. Mirror of
 -- migration 004_digests.py — keep the two in sync. Each run is its own
