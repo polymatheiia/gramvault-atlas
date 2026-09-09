@@ -2,40 +2,40 @@
 
 ## Supported versions
 
-| Version | Supported |
-| ------- | --------- |
-| 0.1.x   | ✅        |
-| < 0.1   | ❌        |
-
-GramVault is a young project — fixes land on `main` and ship in the next
-release rather than being backported.
+Fixes land on `main` and ship in the next release; there are no backports.
 
 ## Reporting a vulnerability
 
-Please **do not open a public issue** for security problems. Instead, use
-GitHub's private vulnerability reporting:
+Please **do not open a public issue** for security problems. Use GitHub's
+private vulnerability reporting on this repository (repo → **Security** tab
+→ **Report a vulnerability**).
 
-**[Report a vulnerability](https://github.com/aleksanderislami03-cell/gramvault/security/advisories/new)**
-(repo → Security tab → "Report a vulnerability")
-
-You'll get a response as soon as possible (this is a spare-time project —
-please allow up to two weeks). Once a fix is out, the advisory is published
-and you'll be credited unless you'd rather not be.
+This is a spare-time project — please allow up to two weeks for a first
+response. Once a fix is out, the advisory is published and you'll be
+credited unless you'd rather not be.
 
 ## Scope notes
 
-GramVault is local-first by design: it binds to `127.0.0.1`, makes no
-network calls except to a localhost Ollama, and has no accounts, telemetry,
-or hosted components. The most security-relevant surfaces are:
+GramVault Atlas is local-first: no accounts, no telemetry, no hosted
+component. By default it binds `127.0.0.1` and makes no network calls
+except to a localhost Ollama. The most security-relevant surfaces:
 
 - **ZIP import** (`backend/gramvault/ingestion/`) — parsing untrusted
-  archive contents (path traversal / zip-slip, decompression issues).
+  archive contents (path traversal / zip-slip, decompression bombs).
 - **Obsidian export** (`backend/gramvault/export/`) — writing files to a
-  user-supplied path.
-- **Markdown/HTML rendering** in the frontend — content from an export is
-  attacker-influenced if someone imports a malicious ZIP.
+  user-supplied vault path.
+- **Markdown / HTML rendering** in the frontend — caption/transcript text
+  from an import is attacker-influenced if a malicious ZIP is imported.
+- **The optional Instagram pull** (`backend/gramvault/ingestion/instagram.py`,
+  `api/routes_pull.py`) — cookie parsing, the on-disk session file
+  (`chmod 600`, never in the DB), and the fact that enabling it makes the
+  server talk to a third party. The `sessionid` must never be logged or
+  persisted anywhere but the session file.
+- **Secrets handling** — `secrets.yaml` (`chmod 600`, gitignored); the
+  Models API is write-only and must never echo a key back.
+- **The bearer-token auth middleware** (`server.auth_token`) — bypasses of
+  it, or of the localhost-only bind, are in scope. "Another app on the
+  same machine can reach the port" is inherent to a localhost web app and
+  not a vulnerability by itself.
 
-Reports in those areas are especially welcome. "The server is reachable by
-other apps on the same machine" is inherent to a localhost web app and not
-considered a vulnerability by itself, but bypasses of the localhost-only
-binding are in scope.
+Reports in those areas are especially welcome.

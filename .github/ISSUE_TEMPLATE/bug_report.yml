@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in GramVault isn't working the way it should
+description: Something in GramVault Atlas isn't working the way it should
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -30,14 +30,18 @@ body:
   - type: dropdown
     id: area
     attributes:
-      label: Which part of GramVault?
+      label: Which part of GramVault Atlas?
       options:
         - Import (ZIP parsing / media organizing)
-        - Enrichment pipeline (captions / transcripts / embeddings)
-        - Gallery / item detail
+        - Pull (opt-in Instagram saved-feed pull)
+        - Enrichment pipeline (captions / transcripts / OCR / embeddings)
+        - Categorize (classifier / review queue)
+        - Digests
+        - Gallery / feed / item detail
         - Chat / search
         - Obsidian export
-        - Setup / packaging / CLI
+        - Models & providers / Settings
+        - Setup / Docker / packaging / CLI
         - Other
     validations:
       required: true

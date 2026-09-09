@@ -1,33 +1,47 @@
-# GramVault Roadmap
+# Roadmap
 
-GramVault v1 is feature-complete: ingestion, the AI enrichment pipeline, chat/search (RAG), the frontend, and Obsidian export are all implemented and tested (see [README.md](README.md) for the full feature list).
+GramVault Atlas is feature-complete for its intended use: pull/import →
+enrich → categorize → digest → Obsidian, plus gallery, feed, and chat.
+Everything in `docs/DESIGN.md` §J is implemented and tested.
 
-This document tracks nice-to-have ideas and follow-up work for future contributors, grouped by area. None of these are required for v1 — they're possibilities, not commitments. If you want to pick one up, see [CONTRIBUTING.md](CONTRIBUTING.md) for how to get set up, and consider opening an issue first to discuss the approach.
+This file tracks nice-to-haves. None are commitments. If you want to pick
+one up, open an issue first to discuss the approach, and see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Ingestion
+## Known open items (from the design doc)
 
-*(Ideas: support for incremental/delta re-imports of a newer export without re-processing unchanged items; import progress reporting over the existing SSE infrastructure used by chat.)*
+- **Finish the `types.ts` migration.** Frontend request/response types are
+  moving onto the generated `src/api/schema.ts` a module at a time
+  (`lib/gallery.ts` and `pages/Pull.tsx` are done). Convert the rest.
+- **Category MOC screenshots / real feed recording** for the README.
 
-- `gramvault link-media` is CLI-only. The same thing on the Import page (pick a directory, show matched/unmatched counts) would put it in reach of users who never open a terminal.
-- The linker matches downloaded files to items by the shortcode in the filename. A content-hash fallback would also catch files renamed after download.
+## Ideas by area
 
-## AI pipeline
+**Ingestion**
+- `gramvault link-media` as an Import-page action (pick a directory, show
+  matched/unmatched counts) for non-terminal users.
+- Content-hash fallback in the linker, to catch files renamed after
+  download (currently matched by shortcode-in-filename only).
+- Incremental re-import of a newer export without re-processing unchanged
+  items.
 
-*(No outstanding items logged during v1 development. Ideas: pluggable embedding/vision models beyond the Ollama defaults; GPU-aware batching for faster-whisper transcription; configurable enrichment concurrency.)*
+**Pull**
+- A scheduled pull (cron/systemd timer) with a "new items" summary.
+- Support for Chromium-family local cookie stores, not just Firefox.
 
-## Chat / search
+**AI pipeline**
+- GPU-aware batching for `faster-whisper`.
+- Configurable enrichment concurrency.
 
-*(No outstanding items logged during v1 development. Ideas: conversation history persistence across sessions; multi-turn follow-up citation tracking; adjustable retrieval parameters (top-k, hybrid weighting) exposed in Settings.)*
+**Chat / search**
+- Conversation history persisted across sessions.
+- Retrieval knobs (top-k, hybrid weighting) exposed in Settings.
 
-## Frontend
+**Obsidian**
+- Selective re-export by tag/date range from the Gallery, not just
+  whole-library.
+- Configurable note templates.
 
-*(No outstanding items logged during v1 development. Ideas: gallery virtualization for very large libraries; saved search/filter presets; a dedicated "link-only" item badge distinguishing items with metadata but no local media.)*
-
-## Obsidian exporter
-
-*(No outstanding items logged during v1 development. Ideas: selective re-export by tag/date range from the Gallery UI rather than whole-library only; configurable note templates.)*
-
-## Release engineering
-
-- Real screenshots for the README (see the `<!-- TODO: screenshot -->` placeholders) once there's a populated library to capture.
-- Optional: a signed/packaged release (e.g. a PyInstaller or Electron-wrapped build) for users who don't want to set up a Python/Node dev environment.
+**Packaging**
+- A signed/packaged release (PyInstaller or Electron wrapper) for users
+  who don't want a Python/Node toolchain.

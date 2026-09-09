@@ -34,7 +34,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
       <form onSubmit={submit} className="card flex w-full max-w-sm flex-col gap-3 p-6">
         <h1 className="text-lg font-semibold text-slate-100">API token required</h1>
         <p className="text-sm text-slate-400">
-          This GramVault server is protected. Paste its <code>auth.token</code> to continue.
+          This GramVault Atlas server is protected. Paste its <code>auth.token</code> to continue.
         </p>
         <input
           className="input"

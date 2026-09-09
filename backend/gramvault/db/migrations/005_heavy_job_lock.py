@@ -4,7 +4,7 @@ The per-kind unique index from 001 (`idx_jobs_one_active_per_kind`) stops
 a second *enrich* job while one is running, but nothing stopped an enrich
 and a digest — or a re-embed and an LLM categorize — from running at the
 same time and thrashing Ollama + faster-whisper on a small box
-(INTEGRATION-PLAN.md §H2, the "global heavy-job semaphore of 1").
+(docs/DESIGN.md §H2, the "global heavy-job semaphore of 1").
 
 This adds a second partial UNIQUE index over a constant expression,
 scoped to the model-bound kinds (`enrich`, `categorize`, `digest`,

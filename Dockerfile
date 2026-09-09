@@ -5,7 +5,7 @@
 #   docker compose up -d --build
 #
 # See docker-compose.yml for the bind mounts (config.yaml, secrets.yaml,
-# data/, the vault, the Instagram session dir) and INTEGRATION-PLAN.md §H2
+# data/, the vault, the Instagram session dir) and docs/DESIGN.md §H2
 # for the deployment notes (host networking vs. a compose network, Ollama
 # on the host vs. in a container).
 

@@ -92,9 +92,9 @@ def create_app(config: Config | None = None) -> FastAPI:
         yield
 
     app = FastAPI(
-        title="GramVault",
-        description="Private, local-first library for saved Instagram content.",
-        version="0.1.0",
+        title="GramVault Atlas",
+        description="Private, local-first pipeline for saved Instagram content.",
+        version="0.2.0",
         lifespan=lifespan,
     )
 

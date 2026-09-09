@@ -1,10 +1,11 @@
-# GramVault configuration template.
+# GramVault Atlas configuration template.
 #
-# Copy this file to `config.yaml` (already done for you in a fresh checkout —
-# config.yaml ships with the same defaults) and adjust paths/models to taste.
-# Every path below is relative to the current working directory unless it is
-# absolute. Nothing in the codebase should ever hardcode a path — everything
-# flows through this file (see backend/gramvault/config.py).
+# `setup.sh` / `setup.ps1` copies this to `config.yaml` (gitignored) on
+# first run; copy it by hand otherwise. Adjust paths / models to taste.
+# Every path below is relative to the current working directory unless it
+# is absolute. Nothing in the codebase hardcodes a path — it all flows
+# through this file (see backend/gramvault/config.py). Environment
+# overrides use GRAMVAULT_<SECTION>__<KEY>, e.g. GRAMVAULT_SERVER__PORT.
 #
 # All values can be overridden with environment variables using a
 # double-underscore delimiter for nesting, e.g.:

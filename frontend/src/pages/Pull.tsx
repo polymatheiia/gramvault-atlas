@@ -240,7 +240,7 @@ export function Pull() {
               </a>
               .
             </p>
-            <p className="text-slate-300">2. Give GramVault the session, one of two ways:</p>
+            <p className="text-slate-300">2. Give it the session, one of two ways:</p>
 
             <div className="flex flex-col gap-2">
               <button

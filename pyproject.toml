@@ -4,12 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gramvault"
-version = "0.1.0"
-description = "Private, local-first library for saved Instagram content with AI chat (RAG) and Obsidian export."
+version = "0.2.0"
+description = "GramVault Atlas — a private, local-first pipeline for saved Instagram content: pull/import, AI enrichment, auto-categorisation, digests, Obsidian export, and RAG chat."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "GramVault contributors" }]
+authors = [
+    { name = "GramVault contributors" },
+    { name = "GramVault Atlas contributors" },
+]
 
 dependencies = [
     "fastapi>=0.110",

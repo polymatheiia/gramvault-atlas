@@ -16,7 +16,7 @@ export function NavBar() {
     <header className="sticky top-0 z-20 border-b border-surface-border bg-surface/95 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
         <NavLink to="/" className="flex items-center gap-2 text-slate-100 no-underline">
-          <span className="text-lg font-semibold tracking-tight">GramVault</span>
+          <span className="text-lg font-semibold tracking-tight">GramVault Atlas</span>
         </NavLink>
         <nav className="flex items-center gap-1">
           {LINKS.map((link) => (

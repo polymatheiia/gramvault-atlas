@@ -1,4 +1,4 @@
-# Weekly dependency updates for the three ecosystems GramVault uses.
+# Weekly dependency updates for the three ecosystems this project uses.
 # Minor/patch bumps are grouped into one PR per ecosystem to keep the
 # noise down for a small project; majors still get their own PR.
 version: 2

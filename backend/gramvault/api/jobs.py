@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 _ACTIVE = (JobStatus.PENDING.value, JobStatus.RUNNING.value)
 
 # "Heavy" = model-bound: these all drive Ollama + faster-whisper hard and
-# must not overlap on a small box (INTEGRATION-PLAN.md §H2). Enforced in the
+# must not overlap on a small box (docs/DESIGN.md §H2). Enforced in the
 # DB by the partial UNIQUE index `idx_jobs_one_active_heavy` (migration
 # 005) — keep this set identical to that index's kind list. `pull` /
 # `model_pull` are network-bound and may still run alongside anything.

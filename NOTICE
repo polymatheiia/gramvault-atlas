@@ -1,0 +1,52 @@
+GramVault Atlas
+===============
+
+GramVault Atlas is a fork of GramVault, distributed under the MIT License
+(see LICENSE).
+
+
+Upstream project
+----------------
+
+GramVault
+  https://github.com/aleksanderislami03-cell/gramvault
+  Copyright (c) 2026 GramVault contributors
+  Author: Aleksander Islami
+  License: MIT
+
+  The ingestion layer, the AI enrichment pipeline, hybrid RAG chat, the
+  React frontend, and the Obsidian exporter originate in the upstream
+  project. Upstream commits keep their original authorship in this
+  repository's git history.
+
+
+Prior work referenced by the opt-in Instagram pull
+--------------------------------------------------
+
+save-insta-posts
+  https://github.com/flynnsharwood/save-insta-posts
+  Author: flynnsharwood
+  License: none stated
+
+  backend/gramvault/ingestion/instagram.py is an independent
+  implementation written for this project. It was informed by the
+  approach save-insta-posts established for downloading one's own saved
+  Instagram posts with Instaloader: a cookies-only login, a newest-first
+  walk that stops once it catches up, jittered delays between requests,
+  and materialising the download in the shape of an official data export.
+  No code from save-insta-posts is vendored or copied here.
+
+Instaloader
+  https://instaloader.github.io/
+  License: MIT
+  Optional dependency (`pip install -e ".[instagram]"`); performs the
+  actual downloading for the opt-in pull feature.
+
+
+Fork-specific components
+------------------------
+
+The classifier keyword table (ai/classifier_keywords.py), the digest
+templates (ai/digest_templates/), and the category taxonomy were adapted
+from the author's own personal reels-triage scripts and are released here
+under the same MIT License.

@@ -6,4 +6,4 @@ gallery API, and Obsidian export. See README.md for the project overview
 and config.example.yaml for configuration.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

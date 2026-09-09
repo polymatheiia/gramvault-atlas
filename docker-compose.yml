@@ -1,4 +1,4 @@
-# GramVault docker-compose — see INTEGRATION-PLAN.md §H2.
+# GramVault docker-compose — see docs/DESIGN.md §H2.
 #
 #   cp config.example.yaml config.yaml     # then edit paths/models
 #   touch secrets.yaml                     # so the Models UI can save API keys
