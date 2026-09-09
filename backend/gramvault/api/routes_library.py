@@ -53,6 +53,11 @@ class ItemListResponse(BaseModel):
     page_size: int
 
 
+class ItemIdListResponse(BaseModel):
+    ids: list[int]
+    total: int
+
+
 class TagUpdateRequest(BaseModel):
     tags: list[str]
 
@@ -141,28 +146,19 @@ def _category_row(conn: sqlite3.Connection, category_id: int) -> sqlite3.Row | N
 # --- gallery listing -------------------------------------------------------
 
 
-@router.get("/items", response_model=ItemListResponse)
-async def list_items(
-    author: str | None = Query(default=None, description="Filter by author username"),
-    media_type: MediaType | None = Query(default=None, description="Filter by media type"),
-    tag: str | None = Query(default=None, description="Filter by tag name"),
-    category: str | None = Query(
-        default=None,
-        description=f"Filter by category name, or '{UNCATEGORIZED}' for items with no category",
-    ),
-    q: str | None = Query(default=None, description="Free-text search over captions"),
-    needs_review: bool = Query(
-        default=False,
-        description="Only items with a low-confidence automatic category (the review queue)",
-    ),
-    date_from: datetime | None = Query(default=None),
-    date_to: datetime | None = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=1, le=200),
-    config: Config = Depends(get_config_dependency),
-) -> ItemListResponse:
-    """Paginated, filterable gallery listing, joined with each item's
-    author/category/tags/media_files."""
+def _item_filter_sql(
+    *,
+    author: str | None,
+    media_type: MediaType | None,
+    tag: str | None,
+    category: str | None,
+    q: str | None,
+    needs_review: bool,
+    date_from: datetime | None,
+    date_to: datetime | None,
+) -> tuple[str, str, list[object]]:
+    """Shared gallery filter → `(joins, where_sql, params)`. Used by the
+    paginated listing and the id-only listing so both stay in lockstep."""
     clauses: list[str] = []
     params: list[object] = []
     joins = ""
@@ -199,6 +195,58 @@ async def list_items(
         params.append(tag)
 
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    return joins, where_sql, params
+
+
+_ITEM_ORDER = "ORDER BY items.imported_at DESC, items.id DESC"
+
+
+@router.get("/items", response_model=ItemListResponse)
+async def list_items(
+    author: str | None = Query(default=None, description="Filter by author username"),
+    media_type: MediaType | None = Query(default=None, description="Filter by media type"),
+    tag: str | None = Query(default=None, description="Filter by tag name"),
+    category: str | None = Query(
+        default=None,
+        description=f"Filter by category name, or '{UNCATEGORIZED}' for items with no category",
+    ),
+    q: str | None = Query(default=None, description="Free-text search over captions"),
+    ids: str | None = Query(
+        default=None,
+        description="Comma-separated item ids: return exactly these, in this order "
+        "(all other filters and pagination are ignored). Powers the feed / prev-next.",
+    ),
+    needs_review: bool = Query(
+        default=False,
+        description="Only items with a low-confidence automatic category (the review queue)",
+    ),
+    date_from: datetime | None = Query(default=None),
+    date_to: datetime | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    config: Config = Depends(get_config_dependency),
+) -> ItemListResponse:
+    """Paginated, filterable gallery listing, joined with each item's
+    author/category/tags/media_files. With `ids=`, returns just those
+    items in the given order (for hydrating a feed window)."""
+    if ids is not None:
+        id_list = _parse_id_csv(ids)[:200]
+        with session_scope(config) as conn:
+            items = _items_by_ids(conn, id_list)
+        return ItemListResponse(
+            items=items, total=len(items), page=1, page_size=max(1, len(items))
+        )
+
+    joins, where_sql, params = _item_filter_sql(
+        author=author,
+        media_type=media_type,
+        tag=tag,
+        category=category,
+        q=q,
+        needs_review=needs_review,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
     with session_scope(config) as conn:
         total_row = conn.execute(
@@ -209,23 +257,76 @@ async def list_items(
         total = total_row["c"] if total_row else 0
 
         offset = (page - 1) * page_size
+        page_ids = [
+            row["id"]
+            for row in conn.execute(
+                f"SELECT DISTINCT items.id AS id FROM items "
+                f"LEFT JOIN authors ON authors.id = items.author_id {joins} {where_sql} "
+                f"{_ITEM_ORDER} LIMIT ? OFFSET ?",
+                [*params, page_size, offset],
+            ).fetchall()
+        ]
+        items = _items_by_ids(conn, page_ids)
+
+    return ItemListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+def _parse_id_csv(raw: str) -> list[int]:
+    out: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part.lstrip("-").isdigit():
+            out.append(int(part))
+    return out
+
+
+def _items_by_ids(conn: sqlite3.Connection, ids: list[int]) -> list[Item]:
+    """Full `Item`s for `ids`, returned in the given order."""
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"{_ITEM_SELECT} WHERE items.id IN ({placeholders})", ids
+    ).fetchall()
+    by_id = {row["id"]: row for row in rows}
+    return [_row_to_item(conn, by_id[i]) for i in ids if i in by_id]
+
+
+@router.get("/item-ids", response_model=ItemIdListResponse)
+async def list_item_ids(
+    author: str | None = Query(default=None),
+    media_type: MediaType | None = Query(default=None),
+    tag: str | None = Query(default=None),
+    category: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    needs_review: bool = Query(default=False),
+    date_from: datetime | None = Query(default=None),
+    date_to: datetime | None = Query(default=None),
+    limit: int = Query(default=5000, ge=1, le=20000),
+    config: Config = Depends(get_config_dependency),
+) -> ItemIdListResponse:
+    """Just the ordered item ids for a gallery filter (same order as
+    `/items`). Powers the reels-style feed and prev/next navigation
+    without shipping every item's full payload."""
+    joins, where_sql, params = _item_filter_sql(
+        author=author,
+        media_type=media_type,
+        tag=tag,
+        category=category,
+        q=q,
+        needs_review=needs_review,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    with session_scope(config) as conn:
         rows = conn.execute(
             f"SELECT DISTINCT items.id AS id FROM items "
             f"LEFT JOIN authors ON authors.id = items.author_id {joins} {where_sql} "
-            f"ORDER BY items.imported_at DESC LIMIT ? OFFSET ?",
-            [*params, page_size, offset],
+            f"{_ITEM_ORDER} LIMIT ?",
+            [*params, limit],
         ).fetchall()
-        ids = [row["id"] for row in rows]
-        items = []
-        if ids:
-            placeholders = ",".join("?" * len(ids))
-            full_rows = conn.execute(
-                f"{_ITEM_SELECT} WHERE items.id IN ({placeholders})", ids
-            ).fetchall()
-            by_id = {row["id"]: row for row in full_rows}
-            items = [_row_to_item(conn, by_id[item_id]) for item_id in ids if item_id in by_id]
-
-    return ItemListResponse(items=items, total=total, page=page, page_size=page_size)
+    ids = [row["id"] for row in rows]
+    return ItemIdListResponse(ids=ids, total=len(ids))
 
 
 @router.get("/items/{item_id}", response_model=Item)

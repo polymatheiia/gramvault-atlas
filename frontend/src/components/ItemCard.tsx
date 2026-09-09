@@ -38,10 +38,10 @@ function Thumbnail({ item }: { item: Item }) {
   return <img src={mediaUrl(first.file_path)} alt={item.caption ?? ''} className="h-full w-full object-cover" loading="lazy" />
 }
 
-export function ItemCard({ item }: { item: Item }) {
+export function ItemCard({ item, contextSearch = '' }: { item: Item; contextSearch?: string }) {
   return (
     <Link
-      to={`/items/${item.id}`}
+      to={`/items/${item.id}${contextSearch}`}
       className="card group flex flex-col overflow-hidden no-underline transition-colors hover:border-accent/60"
     >
       <div className="aspect-square w-full overflow-hidden bg-surface-overlay">

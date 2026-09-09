@@ -708,6 +708,28 @@ export interface paths {
         patch: operations["update_category_api_library_categories__category_id__patch"];
         trace?: never;
     };
+    "/api/library/item-ids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Item Ids
+         * @description Just the ordered item ids for a gallery filter (same order as
+         *     `/items`). Powers the reels-style feed and prev/next navigation
+         *     without shipping every item's full payload.
+         */
+        get: operations["list_item_ids_api_library_item_ids_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/items": {
         parameters: {
             query?: never;
@@ -718,7 +740,8 @@ export interface paths {
         /**
          * List Items
          * @description Paginated, filterable gallery listing, joined with each item's
-         *     author/category/tags/media_files.
+         *     author/category/tags/media_files. With `ids=`, returns just those
+         *     items in the given order (for hydrating a feed window).
          */
         get: operations["list_items_api_library_items_get"];
         put?: never;
@@ -1578,6 +1601,13 @@ export interface components {
         ItemCategoryUpdateRequest: {
             /** Category Id */
             category_id?: number | null;
+        };
+        /** ItemIdListResponse */
+        ItemIdListResponse: {
+            /** Ids */
+            ids: number[];
+            /** Total */
+            total: number;
         };
         /** ItemListResponse */
         ItemListResponse: {
@@ -3128,6 +3158,45 @@ export interface operations {
             };
         };
     };
+    list_item_ids_api_library_item_ids_get: {
+        parameters: {
+            query?: {
+                author?: string | null;
+                media_type?: components["schemas"]["MediaType"] | null;
+                tag?: string | null;
+                category?: string | null;
+                q?: string | null;
+                needs_review?: boolean;
+                date_from?: string | null;
+                date_to?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemIdListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_items_api_library_items_get: {
         parameters: {
             query?: {
@@ -3141,6 +3210,8 @@ export interface operations {
                 category?: string | null;
                 /** @description Free-text search over captions */
                 q?: string | null;
+                /** @description Comma-separated item ids: return exactly these, in this order (all other filters and pagination are ignored). Powers the feed / prev-next. */
+                ids?: string | null;
                 /** @description Only items with a low-confidence automatic category (the review queue) */
                 needs_review?: boolean;
                 date_from?: string | null;

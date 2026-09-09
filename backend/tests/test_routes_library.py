@@ -85,6 +85,35 @@ def test_list_items_filter_by_author(client: TestClient, tmp_config: Config) -> 
     assert body["items"][0]["tags"][0]["name"] == "travel"
 
 
+def test_list_item_ids_matches_list_order_and_filters(
+    client: TestClient, tmp_config: Config
+) -> None:
+    ids = _seed_library(tmp_config)
+
+    full = client.get("/api/library/items").json()
+    id_only = client.get("/api/library/item-ids").json()
+    assert id_only["total"] == 2
+    assert id_only["ids"] == [it["id"] for it in full["items"]]
+
+    reels = client.get("/api/library/item-ids", params={"media_type": "reel"}).json()
+    assert reels["ids"] == [ids["item2_id"]]
+
+
+def test_list_items_by_explicit_ids_preserves_order(
+    client: TestClient, tmp_config: Config
+) -> None:
+    ids = _seed_library(tmp_config)
+    order = [ids["item2_id"], ids["item1_id"]]
+
+    body = client.get(
+        "/api/library/items", params={"ids": ",".join(map(str, order))}
+    ).json()
+    assert [it["id"] for it in body["items"]] == order
+    # unknown ids are silently dropped, not errors
+    body2 = client.get("/api/library/items", params={"ids": f"{ids['item1_id']},999999"}).json()
+    assert [it["id"] for it in body2["items"]] == [ids["item1_id"]]
+
+
 def test_list_items_filter_by_media_type(client: TestClient, tmp_config: Config) -> None:
     _seed_library(tmp_config)
 

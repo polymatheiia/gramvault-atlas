@@ -147,6 +147,11 @@ export interface ItemListResponse {
   page_size: number
 }
 
+export interface ItemIdListResponse {
+  ids: number[]
+  total: number
+}
+
 export interface TagUpdateRequest {
   tags: string[]
 }

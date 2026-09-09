@@ -1667,6 +1667,27 @@
         "title": "ItemCategoryUpdateRequest",
         "type": "object"
       },
+      "ItemIdListResponse": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Ids",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ids",
+          "total"
+        ],
+        "title": "ItemIdListResponse",
+        "type": "object"
+      },
       "ItemListResponse": {
         "properties": {
           "items": {
@@ -4447,9 +4468,179 @@
         ]
       }
     },
+    "/api/library/item-ids": {
+      "get": {
+        "description": "Just the ordered item ids for a gallery filter (same order as\n`/items`). Powers the reels-style feed and prev/next navigation\nwithout shipping every item's full payload.",
+        "operationId": "list_item_ids_api_library_item_ids_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "author",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Author"
+            }
+          },
+          {
+            "in": "query",
+            "name": "media_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MediaType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Media Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          },
+          {
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Category"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "needs_review",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Needs Review",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 5000,
+              "maximum": 20000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemIdListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Item Ids",
+        "tags": [
+          "library"
+        ]
+      }
+    },
     "/api/library/items": {
       "get": {
-        "description": "Paginated, filterable gallery listing, joined with each item's\nauthor/category/tags/media_files.",
+        "description": "Paginated, filterable gallery listing, joined with each item's\nauthor/category/tags/media_files. With `ids=`, returns just those\nitems in the given order (for hydrating a feed window).",
         "operationId": "list_items_api_library_items_get",
         "parameters": [
           {
@@ -4540,6 +4731,24 @@
               ],
               "description": "Free-text search over captions",
               "title": "Q"
+            }
+          },
+          {
+            "description": "Comma-separated item ids: return exactly these, in this order (all other filters and pagination are ignored). Powers the feed / prev-next.",
+            "in": "query",
+            "name": "ids",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Comma-separated item ids: return exactly these, in this order (all other filters and pagination are ignored). Powers the feed / prev-next.",
+              "title": "Ids"
             }
           },
           {

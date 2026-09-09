@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, isNotFound, mediaUrl } from '../api/client'
 import { TagBadge } from '../components/TagBadge'
+import { filterSearch, useSiblingIds } from '../lib/gallery'
 import type { CategoryListResponse, CategoryWithCount, Item, MediaFile } from '../types'
 
 const ENRICHMENT_LABEL: Record<Item['enrichment_status'], string> = {
@@ -46,9 +47,33 @@ function MediaBlock({ file }: { file: MediaFile }) {
 
 export function ItemDetail() {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [item, setItem] = useState<Item | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const { ids: siblingIds } = useSiblingIds(searchParams)
+  const ctx = filterSearch(searchParams)
+  const { prevId, nextId, position } = useMemo(() => {
+    const idx = id ? siblingIds.indexOf(Number(id)) : -1
+    if (idx === -1) return { prevId: null, nextId: null, position: null }
+    return {
+      prevId: idx > 0 ? siblingIds[idx - 1] : null,
+      nextId: idx < siblingIds.length - 1 ? siblingIds[idx + 1] : null,
+      position: `${idx + 1} / ${siblingIds.length}`,
+    }
+  }, [id, siblingIds])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
+      if (e.key === 'ArrowLeft' && prevId != null) navigate(`/items/${prevId}${ctx}`)
+      if (e.key === 'ArrowRight' && nextId != null) navigate(`/items/${nextId}${ctx}`)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [prevId, nextId, ctx, navigate])
 
   const [tagInput, setTagInput] = useState('')
   const [savingTags, setSavingTags] = useState(false)
@@ -132,9 +157,31 @@ export function ItemDetail() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
-      <Link to="/" className="text-sm text-accent no-underline hover:underline">
-        ← Back to gallery
-      </Link>
+      <div className="flex items-center justify-between gap-3">
+        <Link to={`/${ctx}`} className="text-sm text-accent no-underline hover:underline">
+          ← Back to gallery
+        </Link>
+        <div className="flex items-center gap-2 text-sm">
+          {position && <span className="text-slate-500">{position}</span>}
+          {prevId != null ? (
+            <Link to={`/items/${prevId}${ctx}`} className="btn-secondary" title="Previous (←)">
+              ←
+            </Link>
+          ) : (
+            <span className="btn-secondary opacity-40">←</span>
+          )}
+          {nextId != null ? (
+            <Link to={`/items/${nextId}${ctx}`} className="btn-secondary" title="Next (→)">
+              →
+            </Link>
+          ) : (
+            <span className="btn-secondary opacity-40">→</span>
+          )}
+          <Link to={`/feed${ctx}`} className="btn-secondary" title="Open the full-screen feed">
+            ▶ Feed
+          </Link>
+        </div>
+      </div>
 
       <div className="flex flex-col gap-4">
         {item.media_files.length === 0 ? (

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, isNotImplemented } from '../api/client'
 import { ItemCard } from '../components/ItemCard'
+import { filterSearch } from '../lib/gallery'
 import type {
   Author,
   CategoryListResponse,
@@ -152,12 +153,21 @@ export function Gallery() {
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6">
       <div className="flex flex-col gap-3">
-        <input
-          className="input"
-          placeholder="Semantic search across captions, transcripts, and vision captions…"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-        />
+        <div className="flex gap-2">
+          <input
+            className="input"
+            placeholder="Semantic search across captions, transcripts, and vision captions…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+          <Link
+            to={`/feed${filterSearch(searchParams)}`}
+            className="btn-secondary whitespace-nowrap"
+            title="Scroll through these as a full-screen feed"
+          >
+            ▶ Feed
+          </Link>
+        </div>
         <div className="flex flex-wrap gap-2">
           <select
             className="input w-auto"
@@ -248,7 +258,7 @@ export function Gallery() {
             const meta = item.id !== null ? searchScores.get(item.id) : undefined
             return (
               <div key={item.id} className="flex flex-col gap-1">
-                <ItemCard item={item} />
+                <ItemCard item={item} contextSearch={filterSearch(searchParams)} />
                 {search && meta && (
                   <p className="line-clamp-1 px-1 text-xs text-slate-500">
                     match {(meta.score * 100).toFixed(0)}%{meta.snippet ? ` — ${meta.snippet}` : ''}
