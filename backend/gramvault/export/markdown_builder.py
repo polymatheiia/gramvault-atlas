@@ -208,7 +208,7 @@ def render_frontmatter(frontmatter: dict[str, object]) -> str:
     return f"---\n{yaml_text}\n---\n"
 
 
-def _split_frontmatter(text: str) -> tuple[dict[str, object], str]:
+def split_frontmatter(text: str) -> tuple[dict[str, object], str]:
     """`(frontmatter_dict, body)` for a note. `({}, text)` when there's no
     parseable frontmatter."""
     if not text.startswith("---"):
@@ -230,7 +230,7 @@ def extract_gramvault_id(note_text: str) -> int | None:
     """Best-effort parse of the `gramvault_id` frontmatter field out of an
     existing note's text. Returns None if there's no parseable frontmatter
     or no `gramvault_id` key — never raises."""
-    data, _ = _split_frontmatter(note_text)
+    data, _ = split_frontmatter(note_text)
     gramvault_id = data.get("gramvault_id")
     return gramvault_id if isinstance(gramvault_id, int) else None
 
@@ -238,7 +238,7 @@ def extract_gramvault_id(note_text: str) -> int | None:
 def user_tail(existing_text: str) -> str:
     """The user-authored content after `%% gramvault:end %%`. Empty for a
     legacy (marker-less) note — its whole body was GramVault's."""
-    _, body = _split_frontmatter(existing_text)
+    _, body = split_frontmatter(existing_text)
     if MANAGED_END in body:
         return body.split(MANAGED_END, 1)[1].strip("\n")
     return ""
@@ -296,7 +296,7 @@ def build_note_markdown(
     frontmatter = build_frontmatter(item)
     tail = ""
     if existing_text:
-        existing_fm, _ = _split_frontmatter(existing_text)
+        existing_fm, _ = split_frontmatter(existing_text)
         for key, value in existing_fm.items():
             if key not in _OWNED_FRONTMATTER_KEYS:
                 frontmatter[key] = value
@@ -325,5 +325,6 @@ __all__ = [
     "note_relpath",
     "render_frontmatter",
     "sanitize_filename_component",
+    "split_frontmatter",
     "user_tail",
 ]

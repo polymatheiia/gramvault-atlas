@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from gramvault.export.index_builder import IndexEntry
 from gramvault.export.markdown_builder import MANAGED_END, MANAGED_START
-from gramvault.export.moc_builder import build_moc_markdown, moc_filename
+from gramvault.export.moc_builder import build_moc_markdown, moc_filename, read_moc_meta
 
 
 def _entry(item_id: int, *, author: str = "acc", date: str = "2026-01-01") -> IndexEntry:
@@ -59,6 +59,16 @@ class TestBuildMoc:
     def test_no_digest_section_without_one(self) -> None:
         md = build_moc_markdown("psychology", [_entry(1)], subfolder_name="GramVault")
         assert "## Latest digest" not in md
+
+    def test_read_moc_meta_roundtrips_category_and_tail_flag(self) -> None:
+        clean = build_moc_markdown("psychology", [_entry(1)], subfolder_name="GramVault")
+        assert read_moc_meta(clean) == ("psychology", False)
+        with_tail = clean + "\n## Notes\n\nhi\n"
+        assert read_moc_meta(with_tail) == ("psychology", True)
+
+    def test_read_moc_meta_on_a_non_moc_note(self) -> None:
+        assert read_moc_meta("---\ngramvault_id: 5\n---\nbody\n") == (None, False)
+        assert read_moc_meta("no frontmatter here") == (None, False)
 
     def test_preserves_user_tail(self) -> None:
         first = build_moc_markdown("psychology", [_entry(1)], subfolder_name="GramVault")

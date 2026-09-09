@@ -17,6 +17,7 @@ from gramvault.export.markdown_builder import (
     MANAGED_START,
     render_frontmatter,
     sanitize_filename_component,
+    split_frontmatter,
     user_tail,
 )
 
@@ -26,6 +27,16 @@ MOC_SUBDIR_NAME = "_moc"
 def moc_filename(category: str) -> str:
     """`_moc/<category>.md`'s basename — sanitized, stable."""
     return f"{sanitize_filename_component(category, max_length=60)}.md"
+
+
+def read_moc_meta(text: str) -> tuple[str | None, bool]:
+    """`(category, has_user_tail)` for an existing MOC note — used to prune
+    a MOC whose category no longer has any items (§G3), while never
+    deleting one the user has written notes under."""
+    frontmatter, _ = split_frontmatter(text)
+    raw = frontmatter.get("gramvault_moc")
+    category = raw if isinstance(raw, str) else None
+    return category, bool(user_tail(text))
 
 
 def build_moc_markdown(
@@ -97,4 +108,4 @@ def build_moc_markdown(
     return doc
 
 
-__all__ = ["MOC_SUBDIR_NAME", "build_moc_markdown", "moc_filename"]
+__all__ = ["MOC_SUBDIR_NAME", "build_moc_markdown", "moc_filename", "read_moc_meta"]

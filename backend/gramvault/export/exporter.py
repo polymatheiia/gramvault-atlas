@@ -52,7 +52,12 @@ from gramvault.export.markdown_builder import (
     sanitize_filename_component,
     user_tail,
 )
-from gramvault.export.moc_builder import MOC_SUBDIR_NAME, build_moc_markdown, moc_filename
+from gramvault.export.moc_builder import (
+    MOC_SUBDIR_NAME,
+    build_moc_markdown,
+    moc_filename,
+    read_moc_meta,
+)
 from gramvault.export.overview_builder import build_dashboard_markdown
 from gramvault.export.poster import poster_frame
 from gramvault.models.schemas import Item, MediaFile
@@ -204,6 +209,7 @@ def export_items(
     vault_subfolder: str | None = None,
     *,
     category_digests: dict[str, str] | None = None,
+    prune_stale_mocs: bool = False,
 ) -> ExportResult:
     """Export `items` into the configured Obsidian vault. Idempotent --
     see module docstring.
@@ -211,6 +217,10 @@ def export_items(
     `category_digests` (category name -> raw digest markdown) embeds the
     latest digest for each category into its MOC note (§G3); the export
     job resolves it from the DB, direct callers may omit it.
+
+    `prune_stale_mocs` deletes `_moc/<category>.md` files whose category
+    has no items in this export (and which carry no user notes). Only safe
+    on a whole-library export — the job passes it when `item_ids is None`.
     """
     target_dir = resolve_export_target(config, vault_subfolder)
     media_dir = target_dir / MEDIA_SUBDIR_NAME
@@ -281,7 +291,12 @@ def export_items(
     result.dashboard_path = dashboard_path
 
     _write_category_mocs(
-        target_dir, entries_by_category, items, category_digests or {}, result
+        target_dir,
+        entries_by_category,
+        items,
+        category_digests or {},
+        result,
+        prune_stale=prune_stale_mocs,
     )
 
     return result
@@ -293,12 +308,16 @@ def _write_category_mocs(
     items: list[Item],
     category_digests: dict[str, str],
     result: ExportResult,
+    *,
+    prune_stale: bool = False,
 ) -> None:
     """One managed MOC note per category present in this export, under
-    `<target>/_moc/`. Preserves each MOC's user tail (§G3)."""
-    if not entries_by_category:
-        return
+    `<target>/_moc/`. Preserves each MOC's user tail (§G3). When
+    `prune_stale`, also removes MOCs for categories that have no items in
+    this (whole-library) export and no user notes."""
     moc_dir = target_dir / MOC_SUBDIR_NAME
+    if not entries_by_category and not (prune_stale and moc_dir.is_dir()):
+        return
     moc_dir.mkdir(parents=True, exist_ok=True)
     for category, entries in sorted(entries_by_category.items()):
         digest_md = category_digests.get(category)
@@ -317,6 +336,18 @@ def _write_category_mocs(
             encoding="utf-8",
         )
         result.moc_paths.append(path)
+
+    if not prune_stale:
+        return
+    live = set(entries_by_category)
+    for path in moc_dir.glob("*.md"):
+        try:
+            category, has_tail = read_moc_meta(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if category is not None and category not in live and not has_tail:
+            path.unlink(missing_ok=True)
+            result.moc_paths = [p for p in result.moc_paths if p != path]
 
 
 def _rewrite_citations(markdown: str, items: list[Item]) -> str:

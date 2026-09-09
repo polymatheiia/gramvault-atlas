@@ -123,7 +123,13 @@ def _run_export_job(
             items = load_items(conn, item_ids)
             category_digests = load_latest_category_digests(conn)
         result = export_items(
-            config, items, vault_subfolder, category_digests=category_digests
+            config,
+            items,
+            vault_subfolder,
+            category_digests=category_digests,
+            # A partial (item_ids) export must not prune MOCs for categories
+            # that simply weren't in the subset.
+            prune_stale_mocs=item_ids is None,
         )
     except (VaultNotConfiguredError, VaultPathNotFoundError) as exc:
         error_message = str(exc)

@@ -328,6 +328,39 @@ class TestCategoryMocs:
         assert (result.target_dir / "_moc" / "psychology.md").is_file()
         assert result.notes_written == 0 and result.notes_updated == 1
 
+    def test_prune_removes_moc_for_an_emptied_category(self, tmp_path: Path) -> None:
+        config = _config(tmp_path, vault_dir=self._vault(tmp_path))
+        export_items(config, [_item(1, category="psychology"), _item(2, category="beauty")])
+        moc_dir = tmp_path / "vault" / "GramVault" / "_moc"
+        assert (moc_dir / "beauty.md").is_file()
+
+        # item 2 recategorized away from beauty; whole-library re-export prunes.
+        result = export_items(
+            config,
+            [_item(1, category="psychology"), _item(2, category="psychology")],
+            prune_stale_mocs=True,
+        )
+        assert not (moc_dir / "beauty.md").exists()
+        assert (moc_dir / "psychology.md").is_file()
+        assert all(p.name != "beauty.md" for p in result.moc_paths)
+
+    def test_prune_keeps_a_stale_moc_that_has_user_notes(self, tmp_path: Path) -> None:
+        config = _config(tmp_path, vault_dir=self._vault(tmp_path))
+        export_items(config, [_item(2, category="beauty")])
+        beauty = tmp_path / "vault" / "GramVault" / "_moc" / "beauty.md"
+        beauty.write_text(beauty.read_text() + "\n## My routine\n\nkeep me\n", encoding="utf-8")
+
+        export_items(config, [_item(1, category="psychology")], prune_stale_mocs=True)
+        assert beauty.is_file()
+        assert "keep me" in beauty.read_text(encoding="utf-8")
+
+    def test_partial_export_does_not_prune(self, tmp_path: Path) -> None:
+        config = _config(tmp_path, vault_dir=self._vault(tmp_path))
+        export_items(config, [_item(1, category="psychology"), _item(2, category="beauty")])
+        # Re-export only item 1 — beauty's MOC must survive (prune off).
+        export_items(config, [_item(1, category="psychology")], prune_stale_mocs=False)
+        assert (tmp_path / "vault" / "GramVault" / "_moc" / "beauty.md").is_file()
+
 
 class TestMediaModes:
     def test_copy_mode_copies_file_and_embeds(self, tmp_path: Path) -> None:
