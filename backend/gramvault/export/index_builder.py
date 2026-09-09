@@ -27,7 +27,7 @@ class IndexEntry:
     tags: list[str] = field(default_factory=list)
 
 
-def _escape_table_cell(text: str) -> str:
+def escape_table_cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
@@ -68,7 +68,7 @@ def build_index_markdown(entries: list[IndexEntry], *, subfolder_name: str) -> s
         lines.append(
             "| "
             + " | ".join(
-                _escape_table_cell(cell)
+                escape_table_cell(cell)
                 for cell in (entry.author, entry.media_type, entry.date, tags_cell, note_link)
             )
             + " |"
@@ -78,4 +78,4 @@ def build_index_markdown(entries: list[IndexEntry], *, subfolder_name: str) -> s
     return "\n".join(lines)
 
 
-__all__ = ["IndexEntry", "build_index_markdown"]
+__all__ = ["IndexEntry", "build_index_markdown", "escape_table_cell"]

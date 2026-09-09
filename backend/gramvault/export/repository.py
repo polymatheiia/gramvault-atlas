@@ -12,6 +12,7 @@ those without changing `exporter.py`'s call site.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from gramvault.models.schemas import Author, Item, MediaFile, Tag
@@ -95,4 +96,27 @@ def load_items(conn: sqlite3.Connection, item_ids: list[int] | None = None) -> l
     return items
 
 
-__all__ = ["load_items"]
+def load_latest_category_digests(conn: sqlite3.Connection) -> dict[str, str]:
+    """Map `category name -> markdown` of the most recent completed digest
+    whose selection targeted exactly that category (`selection_json` has a
+    `category` and no free-text `query`). Used to embed the latest digest
+    into each category MOC (plan §G3)."""
+    rows = conn.execute(
+        "SELECT selection_json, markdown FROM digests "
+        "WHERE status = 'done' AND markdown IS NOT NULL AND markdown <> '' "
+        "ORDER BY id DESC"
+    ).fetchall()
+    latest: dict[str, str] = {}
+    for row in rows:
+        try:
+            selection = json.loads(row["selection_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        category = selection.get("category")
+        if not category or selection.get("query"):
+            continue
+        latest.setdefault(category, row["markdown"])  # rows are newest-first
+    return latest
+
+
+__all__ = ["load_items", "load_latest_category_digests"]

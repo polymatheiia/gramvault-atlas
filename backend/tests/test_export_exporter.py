@@ -268,6 +268,67 @@ class TestExportDigest:
         assert "keep me" in text
 
 
+class TestCategoryMocs:
+    def _vault(self, tmp_path: Path) -> Path:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        return vault_dir
+
+    def test_one_moc_per_category_no_moc_for_uncategorized(self, tmp_path: Path) -> None:
+        config = _config(tmp_path, vault_dir=self._vault(tmp_path))
+        items = [
+            _item(1, category="psychology"),
+            _item(2, category="psychology"),
+            _item(3, category="beauty"),
+            _item(4, category=None),
+        ]
+        result = export_items(config, items)
+
+        moc_dir = result.target_dir / "_moc"
+        assert {p.name for p in moc_dir.glob("*.md")} == {"psychology.md", "beauty.md"}
+        assert {p.name for p in result.moc_paths} == {"psychology.md", "beauty.md"}
+        psych = (moc_dir / "psychology.md").read_text(encoding="utf-8")
+        assert 'WHERE category = "psychology"' in psych
+        assert psych.count("| ") >= 2  # a table row per item
+
+    def test_moc_embeds_latest_category_digest_with_rewritten_citations(
+        self, tmp_path: Path
+    ) -> None:
+        config = _config(tmp_path, vault_dir=self._vault(tmp_path))
+        item = _item(7, category="books/manga", author=Author(id=1, username="acc"))
+        result = export_items(
+            config,
+            [item],
+            category_digests={
+                "books/manga": "## Picks\n- **Dune** [[item:7]] and [[item:999]]\n"
+            },
+        )
+        moc = (result.target_dir / "_moc" / "books-manga.md").read_text(encoding="utf-8")
+        assert "## Latest digest" in moc
+        assert f"[[{note_filename(item).removesuffix('.md')}]]" in moc
+        assert "[[item:7]]" not in moc
+        assert "[[item:999]]" in moc  # unknown id untouched
+
+    def test_moc_user_tail_survives_reexport(self, tmp_path: Path) -> None:
+        config = _config(tmp_path, vault_dir=self._vault(tmp_path))
+        export_items(config, [_item(1, category="psychology")])
+        moc = tmp_path / "vault" / "GramVault" / "_moc" / "psychology.md"
+        moc.write_text(moc.read_text() + "\n## Reading order\n\n1. start here\n", encoding="utf-8")
+
+        export_items(config, [_item(1, category="psychology"), _item(2, category="psychology")])
+        text = moc.read_text(encoding="utf-8")
+        assert "start here" in text
+        assert "count: 2" in text
+
+    def test_moc_not_treated_as_a_stale_item_note(self, tmp_path: Path) -> None:
+        # A MOC has no gramvault_id — the stale-note scan must ignore it.
+        config = _config(tmp_path, vault_dir=self._vault(tmp_path))
+        export_items(config, [_item(1, category="psychology")])
+        result = export_items(config, [_item(1, category="psychology")])
+        assert (result.target_dir / "_moc" / "psychology.md").is_file()
+        assert result.notes_written == 0 and result.notes_updated == 1
+
+
 class TestMediaModes:
     def test_copy_mode_copies_file_and_embeds(self, tmp_path: Path) -> None:
         vault_dir = tmp_path / "vault"

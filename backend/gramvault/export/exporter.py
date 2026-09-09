@@ -52,6 +52,7 @@ from gramvault.export.markdown_builder import (
     sanitize_filename_component,
     user_tail,
 )
+from gramvault.export.moc_builder import MOC_SUBDIR_NAME, build_moc_markdown, moc_filename
 from gramvault.export.overview_builder import build_dashboard_markdown
 from gramvault.export.poster import poster_frame
 from gramvault.models.schemas import Item, MediaFile
@@ -84,6 +85,7 @@ class ExportResult:
     skipped: list[SkippedItem] = field(default_factory=list)
     index_path: Path | None = None
     dashboard_path: Path | None = None
+    moc_paths: list[Path] = field(default_factory=list)
 
 
 def resolve_export_target(config: Config, vault_subfolder: str | None) -> Path:
@@ -197,16 +199,26 @@ def _copy_or_link_media(
 
 
 def export_items(
-    config: Config, items: list[Item], vault_subfolder: str | None = None
+    config: Config,
+    items: list[Item],
+    vault_subfolder: str | None = None,
+    *,
+    category_digests: dict[str, str] | None = None,
 ) -> ExportResult:
     """Export `items` into the configured Obsidian vault. Idempotent --
-    see module docstring."""
+    see module docstring.
+
+    `category_digests` (category name -> raw digest markdown) embeds the
+    latest digest for each category into its MOC note (§G3); the export
+    job resolves it from the DB, direct callers may omit it.
+    """
     target_dir = resolve_export_target(config, vault_subfolder)
     media_dir = target_dir / MEDIA_SUBDIR_NAME
 
     result = ExportResult(target_dir=target_dir)
     existing_notes_by_id = _scan_existing_notes_by_gramvault_id(target_dir)
     index_entries: list[IndexEntry] = []
+    entries_by_category: dict[str, list[IndexEntry]] = {}
 
     layout = config.export.layout
 
@@ -245,16 +257,17 @@ def export_items(
             result.notes_written += 1
 
         date_source = item.taken_at or item.imported_at
-        index_entries.append(
-            IndexEntry(
-                item_id=item.id,
-                note_filename=filename,
-                author=item.author.username if item.author is not None else "unknown",
-                media_type=item.media_type.value if hasattr(item.media_type, "value") else str(item.media_type),
-                date=date_source.isoformat() if date_source else "",
-                tags=[tag.name for tag in item.tags],
-            )
+        entry = IndexEntry(
+            item_id=item.id,
+            note_filename=filename,
+            author=item.author.username if item.author is not None else "unknown",
+            media_type=item.media_type.value if hasattr(item.media_type, "value") else str(item.media_type),
+            date=date_source.isoformat() if date_source else "",
+            tags=[tag.name for tag in item.tags],
         )
+        index_entries.append(entry)
+        if item.category:
+            entries_by_category.setdefault(item.category, []).append(entry)
 
     index_markdown = build_index_markdown(index_entries, subfolder_name=target_dir.name)
     index_path = target_dir / INDEX_NOTE_FILENAME
@@ -267,7 +280,43 @@ def export_items(
     )
     result.dashboard_path = dashboard_path
 
+    _write_category_mocs(
+        target_dir, entries_by_category, items, category_digests or {}, result
+    )
+
     return result
+
+
+def _write_category_mocs(
+    target_dir: Path,
+    entries_by_category: dict[str, list[IndexEntry]],
+    items: list[Item],
+    category_digests: dict[str, str],
+    result: ExportResult,
+) -> None:
+    """One managed MOC note per category present in this export, under
+    `<target>/_moc/`. Preserves each MOC's user tail (§G3)."""
+    if not entries_by_category:
+        return
+    moc_dir = target_dir / MOC_SUBDIR_NAME
+    moc_dir.mkdir(parents=True, exist_ok=True)
+    for category, entries in sorted(entries_by_category.items()):
+        digest_md = category_digests.get(category)
+        if digest_md:
+            digest_md = _rewrite_citations(digest_md, items)
+        path = moc_dir / moc_filename(category)
+        existing = path.read_text(encoding="utf-8") if path.is_file() else None
+        path.write_text(
+            build_moc_markdown(
+                category,
+                entries,
+                subfolder_name=target_dir.name,
+                digest_markdown=digest_md,
+                existing_text=existing,
+            ),
+            encoding="utf-8",
+        )
+        result.moc_paths.append(path)
 
 
 def _rewrite_citations(markdown: str, items: list[Item]) -> str:

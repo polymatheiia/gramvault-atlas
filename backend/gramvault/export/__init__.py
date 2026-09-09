@@ -8,6 +8,10 @@ Modules:
         + body), sanitize stable cross-platform filenames.
     index_builder     — render "GramVault Index.md" (Dataview block + a
         plain-Markdown fallback table).
+    moc_builder        — render one "_moc/<category>.md" per category: the
+        latest digest for it + a Dataview/fallback table of its items.
+    overview_builder   — render "GramVault Dashboard.md" (library stats).
+    poster             — grab a still poster frame for a video note (§G6).
     repository        — load Item/MediaFile/Author/Tag rows out of the
         shared SQLite DB for export (read-only; A6 does not write to
         items/media_files/tags).

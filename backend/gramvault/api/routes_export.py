@@ -39,7 +39,7 @@ from gramvault.export.exporter import (
     VaultPathNotFoundError,
     export_items,
 )
-from gramvault.export.repository import load_items
+from gramvault.export.repository import load_items, load_latest_category_digests
 from gramvault.models.schemas import JobStatus
 
 router = APIRouter(prefix="/api/export", tags=["export"])
@@ -121,7 +121,10 @@ def _run_export_job(
     try:
         with session_scope(config) as conn:
             items = load_items(conn, item_ids)
-        result = export_items(config, items, vault_subfolder)
+            category_digests = load_latest_category_digests(conn)
+        result = export_items(
+            config, items, vault_subfolder, category_digests=category_digests
+        )
     except (VaultNotConfiguredError, VaultPathNotFoundError) as exc:
         error_message = str(exc)
     except Exception as exc:  # defensive: a job must never stay "running" forever
