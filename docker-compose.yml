@@ -36,6 +36,12 @@ services:
     environment:
       # Host's native Ollama (host networking → localhost is the host).
       - GRAMVAULT_OLLAMA__HOST=http://127.0.0.1:11434
+      # Fixed in-container paths, matched to the bind mounts below. These
+      # override paths.* in config.yaml so the same config.yaml works both
+      # in and out of the container.
+      - GRAMVAULT_PATHS__DB_PATH=/data/gramvault.db
+      - GRAMVAULT_PATHS__CHROMA_DIR=/data/chroma
+      - GRAMVAULT_PATHS__LIBRARY_DIR=/library
       # §F: the cached Instagram session lives at the bind-mount target below.
       - GRAMVAULT_PULL__SESSION_DIR=/data/instaloader
     volumes:
@@ -43,8 +49,12 @@ services:
       # persist back to them.
       - ./config.yaml:/app/config.yaml
       - ./secrets.yaml:/app/secrets.yaml
-      # SQLite db, Chroma, imported media, whisper model cache (HF_HOME).
+      # SQLite db, Chroma, video keyframes (db_path.parent/keyframes), the
+      # whisper model cache (HF_HOME).
       - ./data:/data
+      # Imported media. media_files.file_path rows are stored relative to
+      # this dir, so it can live anywhere on the host.
+      - ./library:/library
       # §F Instagram session dir — carries over an existing host login
       # (~/.config/instaloader/session-<user>). Drop this line to keep the
       # session inside ./data/instaloader instead.

@@ -41,14 +41,11 @@ RUN pip install --no-cache-dir -e ".[instagram]"
 # (Path(__file__).parents[2] / "frontend" / "dist" == /app/frontend/dist).
 COPY --from=frontend /frontend/dist ./frontend/dist
 
-# config.yaml + secrets.yaml arrive as bind mounts at runtime. Everything
-# else is pinned into the /data volume so nothing state-bearing lives in
-# the image layer.
+# config.yaml + secrets.yaml arrive as bind mounts at runtime; the concrete
+# data paths are set in docker-compose.yml (matched to its bind mounts).
+# HF_HOME keeps the downloaded faster-whisper model on the /data volume.
 ENV GRAMVAULT_CONFIG_PATH=/app/config.yaml \
-    HF_HOME=/data/hf \
-    GRAMVAULT_PATHS__LIBRARY_DIR=/data/library \
-    GRAMVAULT_PATHS__DB_PATH=/data/gramvault.db \
-    GRAMVAULT_PATHS__CHROMA_DIR=/data/chroma
+    HF_HOME=/data/hf
 
 # Non-root by default. docker-compose.yml overrides this with `user:` so the
 # process matches the host uid that owns the bind-mounted data/ and vault.

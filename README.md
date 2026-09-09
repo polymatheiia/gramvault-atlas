@@ -113,11 +113,11 @@ Binding to a non-local address without setting `server.auth_token` is
 unsafe. Ollama is expected to be running natively on the host
 (`127.0.0.1:11434`); uncomment the `ollama` service to containerize it too.
 
-`config.yaml`, `secrets.yaml`, `data/` (SQLite + Chroma + media + the
-cached whisper model) and — if you uncomment it — your Obsidian vault are
-bind-mounted, so all state lives on the host. Set `GRAMVAULT_UID` /
-`GRAMVAULT_GID` in a `.env` file to your `id -u` / `id -g` so the container
-can write them. Details and the bridge-network alternative are in
+`config.yaml`, `secrets.yaml`, `data/` (SQLite + Chroma + keyframes + the
+cached whisper model), `library/` (imported media) and — if you uncomment
+it — your Obsidian vault are bind-mounted, so all state lives on the host.
+Set `GRAMVAULT_UID` / `GRAMVAULT_GID` in a `.env` file to your `id -u` /
+`id -g` so the container can write them. Details and the bridge-network alternative are in
 `INTEGRATION-PLAN.md` §H2; for a no-Docker setup, `INTEGRATION-PLAN.md` §H1
 has a corrected systemd user unit.
 
