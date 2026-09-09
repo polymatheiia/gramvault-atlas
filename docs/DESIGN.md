@@ -746,16 +746,16 @@ the mp4 — mobile Obsidian handles that far better than inline video.
 
 ### H1  Now: systemd user service (corrected)
 ```ini
-# ~/.config/systemd/user/gramvault.service
+# ~/.config/systemd/user/gramvault.service   (%h = your home dir)
 [Unit]
-Description=GramVault
+Description=GramVault Atlas
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-WorkingDirectory=~/gramvault
-Environment=GRAMVAULT_CONFIG_PATH=~/gramvault/config.yaml
-ExecStart=~/gramvault/.venv/bin/gramvault serve --host 100.x.y.z --port 8777
+WorkingDirectory=%h/gramvault
+Environment=GRAMVAULT_CONFIG_PATH=%h/gramvault/config.yaml
+ExecStart=%h/gramvault/.venv/bin/gramvault serve --host 100.x.y.z --port 8777
 Restart=always
 RestartSec=5
 
