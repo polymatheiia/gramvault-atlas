@@ -2,13 +2,11 @@
 via `gramvault.ai.embedding_store`) combined with a keyword/full-text pass
 over SQLite.
 
-FTS5 note: `backend/gramvault/db/schema.sql` does not define any FTS5
-virtual tables (no `CREATE VIRTUAL TABLE ... USING fts5`), so this module
-falls back to a `LIKE`-based keyword search (see `keyword_search()` below).
-This is an acceptable v1 per the task brief — if a future revision adds an
-FTS5 table (e.g. `items_fts`), swap `keyword_search()`'s query for an FTS
-MATCH query and this module's public interface (`hybrid_search`,
-`RetrievalResult`) shouldn't need to change.
+FTS5 note: `keyword_search()` runs an `items_fts` MATCH query (FTS5 table
+from migration 006, maintained by `gramvault.chat.fts`). If that table is
+missing (a DB from before 006) or a query can't be turned into a valid
+MATCH expression, it falls back to the original `LIKE` + `GROUP_CONCAT`
+scan. `hybrid_search` / `RetrievalResult` are unchanged either way.
 
 Merge/rerank strategy (intentionally simple, not "academic"):
     1. Run vector search and keyword search independently.
@@ -22,13 +20,21 @@ Merge/rerank strategy (intentionally simple, not "academic"):
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass, field
 
 from gramvault.ai import embedding_store
 from gramvault.ai.providers import get_provider
+from gramvault.chat import fts
 from gramvault.config import Config, get_config
 from gramvault.models.schemas import Author, Item, MediaFile, Tag
+
+# Split a free-text query into tokens for an FTS5 MATCH expression. `\w`
+# under Python 3's default `re.UNICODE` keeps letters/digits of any script
+# (the corpus is multilingual), so operators/punctuation that would
+# otherwise be interpreted by FTS5 are dropped.
+_FTS_TOKEN_SPLIT = re.compile(r"\W+", re.UNICODE)
 
 # Flat bonus applied when an item appears in both the vector and keyword
 # result sets (see module docstring, step 3).
@@ -81,16 +87,62 @@ def vector_search(
     ]
 
 
-def keyword_search(conn: sqlite3.Connection, query: str, limit: int = 20) -> list[RetrievalResult]:
-    """LIKE-based keyword fallback over item captions/authors/tags/AI text.
+def _fts_match_expr(query: str) -> str:
+    """Turn a free-text query into an FTS5 MATCH string: each token
+    prefix-matched (`term*`) and AND-ed. Empty if the query has no
+    word characters."""
+    tokens = [t for t in _FTS_TOKEN_SPLIT.split(query) if t]
+    return " ".join(f"{t}*" for t in tokens)
 
-    See module docstring — no FTS5 table exists in schema.sql yet, so this
-    is a pragmatic v1: one aggregated row per item, scored by which
-    field(s) the query substring shows up in.
-    """
+
+def keyword_search(conn: sqlite3.Connection, query: str, limit: int = 20) -> list[RetrievalResult]:
+    """Keyword pass over caption / author / tags / transcript / vision /
+    OCR text. Uses the `items_fts` FTS5 index (migration 006); falls back
+    to a `LIKE` scan if that table is absent or the query yields no usable
+    MATCH expression."""
     query = query.strip()
     if not query:
         return []
+
+    match_expr = _fts_match_expr(query)
+    if match_expr and fts.ensure_populated(conn):
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                    rowid AS item_id,
+                    snippet(items_fts, -1, '', '', ' … ', 14) AS snippet
+                FROM items_fts
+                WHERE items_fts MATCH :q
+                ORDER BY bm25(items_fts, 10.0, 1.5, 4.0, 3.0, 2.0, 3.0)
+                LIMIT :limit
+                """,
+                {"q": match_expr, "limit": limit},
+            ).fetchall()
+        except sqlite3.OperationalError:
+            pass  # malformed MATCH despite sanitising — fall through to LIKE
+        else:
+            # Rows come back best-first (bm25 ASC). Score by rank position,
+            # bounded so keyword hits sit alongside the vector scores.
+            return [
+                RetrievalResult(
+                    item_id=row["item_id"],
+                    score=round(max(0.12, 0.7 - i * 0.03), 3),
+                    snippet=row["snippet"] or None,
+                    sources={"keyword"},
+                )
+                for i, row in enumerate(rows)
+            ]
+
+    return _keyword_search_like(conn, query, limit)
+
+
+def _keyword_search_like(
+    conn: sqlite3.Connection, query: str, limit: int = 20
+) -> list[RetrievalResult]:
+    """Original `LIKE` + `GROUP_CONCAT` scan — the fallback when `items_fts`
+    isn't available. One aggregated row per item, scored by which field(s)
+    the query substring appears in."""
     like_pattern = f"%{query}%"
 
     rows = conn.execute(

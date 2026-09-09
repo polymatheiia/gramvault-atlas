@@ -233,3 +233,13 @@ CREATE TABLE IF NOT EXISTS digests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_digests_created_at ON digests(created_at);
+
+-- FTS5 keyword index over the library (migration 006_items_fts.py — keep
+-- in sync). Not trigger-maintained: import/pull and enrichment call
+-- gramvault.chat.fts.reindex() for the items they touch, and
+-- keyword_search() does a full rebuild if it finds the index empty. On a
+-- fresh DB this starts empty (nothing to populate).
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+    caption, author, tags, transcript, vision, ocr,
+    tokenize = 'unicode61 remove_diacritics 2'
+);

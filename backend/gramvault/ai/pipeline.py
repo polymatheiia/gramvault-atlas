@@ -51,6 +51,7 @@ from typing import Literal
 from gramvault.ai import document_builder, embedding_store, keyframes, ocr, transcription
 from gramvault.ai.ollama_client import DEFAULT_CAPTION_PROMPT
 from gramvault.ai.providers import get_provider
+from gramvault.chat import fts
 from gramvault.chat.retrieval import fetch_items
 from gramvault.config import Config, get_config
 from gramvault.db.session import session_scope
@@ -478,6 +479,14 @@ async def process_items(
                 ) from exc
         if progress_cb is not None:
             progress_cb(index + 1, total)
+
+    # Enrichment just rewrote transcripts / vision captions / OCR text —
+    # refresh the FTS keyword index for the batch (best-effort).
+    try:
+        with session_scope(config) as conn:
+            fts.reindex(conn, list(item_ids))
+    except Exception:  # noqa: BLE001 - never fail a finished batch on index upkeep
+        logger.warning("process_items: FTS reindex failed", exc_info=True)
 
 
 # --- queue resolution helpers (used by routes_enrich.py) -----------------------

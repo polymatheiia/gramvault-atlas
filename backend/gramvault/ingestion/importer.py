@@ -22,15 +22,19 @@ duplicating rows.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import zipfile
 from pathlib import Path
 
+from gramvault.chat import fts
 from gramvault.config import Config, get_config
 from gramvault.db.session import session_scope
 from gramvault.ingestion.organizer import organize_zip_member
 from gramvault.ingestion.parser import ExportFormatError, OwnPost, SavedItem, parse_export
 from gramvault.models.schemas import ImportJob, JobStatus
+
+logger = logging.getLogger(__name__)
 
 # --- import_jobs CRUD helpers (used by both this module and the API routes) --
 
@@ -288,6 +292,15 @@ def run_import(job_id: int, zip_path: Path, config: Config | None = None) -> Imp
             (final_status, error_message, job_id),
         )
         row = conn.execute("SELECT * FROM import_jobs WHERE id = ?", (job_id,)).fetchone()
+
+    if final_status == JobStatus.DONE.value and processed > failed:
+        # New rows landed — refresh the FTS keyword index (best-effort).
+        try:
+            with session_scope(config) as conn:
+                fts.reindex(conn, None)
+        except Exception:  # noqa: BLE001 - index upkeep must not fail the import
+            logger.warning("import: FTS reindex failed", exc_info=True)
+
     return _row_to_job(row)
 
 

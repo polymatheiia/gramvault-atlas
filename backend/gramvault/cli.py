@@ -41,6 +41,27 @@ def serve(
     )
 
 
+@app.command(name="reindex-search")
+def reindex_search() -> None:
+    """Rebuild the `items_fts` keyword-search index from scratch.
+
+    Import/pull and enrichment keep it current automatically; run this
+    after a manual DB edit, or once on a database that predates the FTS
+    index (migration 006).
+    """
+    from gramvault.chat import fts
+    from gramvault.db.session import session_scope
+
+    config = get_config()
+    with session_scope(config) as conn:
+        if not fts.fts_available(conn):
+            typer.echo("items_fts table not found — run `gramvault migrate` first.")
+            raise typer.Exit(code=1)
+        fts.reindex(conn, None)
+        count = conn.execute("SELECT count(*) FROM items_fts").fetchone()[0]
+    typer.echo(f"Rebuilt items_fts: {count} item(s) indexed.")
+
+
 @app.command(name="openapi")
 def dump_openapi(
     out: Path | None = typer.Option(

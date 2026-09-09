@@ -245,3 +245,43 @@ class TestOcrMigration:
             assert schema_version(conn) == latest_migration_version()
         finally:
             conn.close()
+
+
+class TestItemsFtsMigration:
+    def test_creates_and_backfills_the_fts_index(self, tmp_path) -> None:
+        from gramvault.db.session import migrate
+
+        conn = get_connection(
+            Config.model_validate({"paths": {"db_path": str(tmp_path / "pre006.db")}})
+        )
+        try:
+            init_db(conn)
+            # Simulate a DB stamped before 006: drop items_fts, add a row.
+            conn.executescript("DROP TABLE IF EXISTS items_fts; PRAGMA user_version = 5;")
+            conn.execute(
+                "INSERT INTO items (media_type, caption) VALUES ('photo', 'a rare keyword')"
+            )
+            conn.commit()
+
+            migrate(conn)
+
+            assert schema_version(conn) == latest_migration_version()
+            hit = conn.execute(
+                "SELECT rowid FROM items_fts WHERE items_fts MATCH 'rare'"
+            ).fetchone()
+            assert hit is not None
+        finally:
+            conn.close()
+
+    def test_migration_006_is_rerunnable(self, tmp_config: Config) -> None:
+        conn = get_connection(tmp_config)
+        try:
+            init_db(conn)
+            for _, path in session._discover_migrations():
+                if path.name.startswith("006"):
+                    session._apply_migration(conn, path)  # must not raise
+            assert conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'items_fts'"
+            ).fetchone()[0] == 1
+        finally:
+            conn.close()

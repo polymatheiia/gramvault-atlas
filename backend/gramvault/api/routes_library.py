@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from gramvault.api.deps import get_config_dependency
+from gramvault.chat import fts
 from gramvault.config import Config
 from gramvault.db.session import session_scope
 from gramvault.models.schemas import (
@@ -465,4 +466,5 @@ async def update_item_tags(
 
         row = conn.execute(f"{_ITEM_SELECT} WHERE items.id = ?", (item_id,)).fetchone()
         item = _row_to_item(conn, row)
+        fts.reindex(conn, [item_id])  # tags are a keyword-search field
     return item
