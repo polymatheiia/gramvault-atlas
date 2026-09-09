@@ -1,46 +1,63 @@
-# GramVault docker-compose.
+# GramVault docker-compose — see INTEGRATION-PLAN.md §H2.
 #
-# NOTE ON OLLAMA: Ollama is intentionally NOT defined as a service here.
-# In typical local dev, Ollama runs directly on the host machine (installed
-# natively, listening on http://localhost:11434) rather than inside this
-# compose network. The backend container reaches it via
-# `host.docker.internal`, which Docker Desktop (Windows/Mac) maps to the
-# host automatically. On Linux you may need to add:
-#   extra_hosts:
-#     - "host.docker.internal:host-gateway"
-# If you'd rather run Ollama in a container too, uncomment the `ollama`
-# service below and change GRAMVAULT_OLLAMA__HOST to "http://ollama:11434".
+#   cp config.example.yaml config.yaml     # then edit paths/models
+#   touch secrets.yaml                     # so the Models UI can save API keys
+#   docker compose up -d --build
+#
+# NETWORKING
+#   This uses `network_mode: host` so the server binds the host's interfaces
+#   directly — the Tailscale-IP bind then happens in-app and survives Docker
+#   starting before tailscale0 has an address (see §H2 / W2). Set
+#   `server.host` in config.yaml to 127.0.0.1 (local only) or your Tailscale
+#   IP (100.x.y.z). Never 0.0.0.0 unless `server.auth_token` is also set.
+#   If you would rather use a bridge network, drop `network_mode: host`, add
+#   `ports: ["127.0.0.1:8000:8000"]`, set GRAMVAULT_SERVER__HOST=0.0.0.0, and
+#   point GRAMVAULT_OLLAMA__HOST at host.docker.internal (+ extra_hosts).
+#
+# OLLAMA
+#   Not a service here — with host networking the container reaches the
+#   host's native Ollama at 127.0.0.1:11434 (the config.yaml default). To run
+#   Ollama in a container instead, uncomment the `ollama` service below.
+#
+# FILE OWNERSHIP
+#   `user:` runs the process as your host uid so it can write the bind-mounted
+#   data/, config.yaml, secrets.yaml and vault. Override per-host with a .env
+#   file: GRAMVAULT_UID=$(id -u)  GRAMVAULT_GID=$(id -g)
 
 services:
-  backend:
+  gramvault:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
+    image: gramvault:local
+    restart: unless-stopped
+    network_mode: host
+    user: "${GRAMVAULT_UID:-1000}:${GRAMVAULT_GID:-1000}"
     environment:
-      - GRAMVAULT_SERVER__HOST=0.0.0.0
-      - GRAMVAULT_SERVER__PORT=8000
-      # Point at the host's Ollama install by default.
-      - GRAMVAULT_OLLAMA__HOST=http://host.docker.internal:11434
-      - GRAMVAULT_PATHS__LIBRARY_DIR=/data/library
-      - GRAMVAULT_PATHS__DB_PATH=/data/gramvault.db
-      - GRAMVAULT_PATHS__CHROMA_DIR=/data/chroma
+      # Host's native Ollama (host networking → localhost is the host).
+      - GRAMVAULT_OLLAMA__HOST=http://127.0.0.1:11434
+      # §F: the cached Instagram session lives at the bind-mount target below.
+      - GRAMVAULT_PULL__SESSION_DIR=/data/instaloader
     volumes:
+      # config.yaml + secrets.yaml are writable: Settings → Obsidian/Models
+      # persist back to them.
+      - ./config.yaml:/app/config.yaml
+      - ./secrets.yaml:/app/secrets.yaml
+      # SQLite db, Chroma, imported media, whisper model cache (HF_HOME).
       - ./data:/data
-      # Mount an Obsidian vault here if exporting from inside the container:
-      # - /path/to/your/vault:/vault
-    extra_hosts:
-      # Needed on Linux hosts for host.docker.internal to resolve.
-      - "host.docker.internal:host-gateway"
+      # §F Instagram session dir — carries over an existing host login
+      # (~/.config/instaloader/session-<user>). Drop this line to keep the
+      # session inside ./data/instaloader instead.
+      - ${HOME}/.config/instaloader:/data/instaloader
+      # Obsidian vault — uncomment and set the host path to export into it.
+      # Must match `paths.obsidian_vault_dir: /vault` in config.yaml.
+      # - /path/to/your/Obsidian/vault:/vault
 
   # --- Optional: run Ollama in a container instead of on the host ---
+  # Also uses host networking so it stays reachable at 127.0.0.1:11434.
   # ollama:
   #   image: ollama/ollama:latest
-  #   ports:
-  #     - "11434:11434"
+  #   restart: unless-stopped
+  #   network_mode: host
   #   volumes:
-  #     - ollama_data:/root/.ollama
-
-# volumes:
-#   ollama_data:
+  #     - ./data/ollama:/root/.ollama

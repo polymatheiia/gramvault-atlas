@@ -1,0 +1,50 @@
+# Keep the build context small and free of anything private or machine-local.
+# config.yaml / secrets.yaml are bind-mounted at runtime, never baked in.
+
+.git
+.github
+.venv
+venv
+
+# runtime state + user data (never in an image layer)
+config.yaml
+secrets.yaml
+data
+library
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+chroma
+chroma_data
+*.obsidian-export
+
+# python
+__pycache__
+*.py[cod]
+*.egg-info
+.eggs
+.ruff_cache
+.pytest_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# node — rebuilt inside the frontend stage
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# tests / docs / dev tooling not needed at runtime
+backend/tests
+docs
+*.md
+!README.md
+setup.ps1
+setup.sh
+
+# editors / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db

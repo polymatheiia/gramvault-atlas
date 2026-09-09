@@ -94,6 +94,33 @@ Visit **http://localhost:8000**, then either:
 - go to **Import** and upload your own Instagram export ZIP, or
 - try it out first with the bundled demo fixture: `gramvault import tests/fixtures/sample_export.zip`
 
+### Run it with Docker
+
+A `Dockerfile` (multi-stage: builds the frontend, then a slim Python runtime
+with ffmpeg and the optional `instaloader` extra) and a `docker-compose.yml`
+are included for a long-running deployment:
+
+```bash
+cp config.example.yaml config.yaml     # edit paths/models to taste
+touch secrets.yaml                     # so Settings → Models can save API keys
+docker compose up -d --build
+```
+
+The compose file uses **host networking**, so the server binds whatever
+`server.host` in `config.yaml` says — `127.0.0.1` for local-only, or your
+Tailscale IP (`100.x.y.z`) to reach it from other devices on your tailnet.
+Binding to a non-local address without setting `server.auth_token` is
+unsafe. Ollama is expected to be running natively on the host
+(`127.0.0.1:11434`); uncomment the `ollama` service to containerize it too.
+
+`config.yaml`, `secrets.yaml`, `data/` (SQLite + Chroma + media + the
+cached whisper model) and — if you uncomment it — your Obsidian vault are
+bind-mounted, so all state lives on the host. Set `GRAMVAULT_UID` /
+`GRAMVAULT_GID` in a `.env` file to your `id -u` / `id -g` so the container
+can write them. Details and the bridge-network alternative are in
+`INTEGRATION-PLAN.md` §H2; for a no-Docker setup, `INTEGRATION-PLAN.md` §H1
+has a corrected systemd user unit.
+
 ## Architecture
 
 ```mermaid
