@@ -7,12 +7,14 @@
  * There is now a generated alternative: `src/api/schema.d.ts`, produced by
  * `npm run gen:api` (openapi-typescript over `openapi.json`, which
  * `gramvault openapi --out frontend/openapi.json` refreshes). New code
- * should prefer types pulled from there — e.g.
- *   `type Digest = components['schemas']['Digest']`
- * — and this file is retired module by module as that happens (plan §A6).
- * Until then, when you change an endpoint, run `npm run gen:api` and, if
- * the shape lives here, update it too. CI's `api-types` job fails if the
- * committed `schema.d.ts` / `openapi.json` drift from the routes.
+ * should prefer types pulled from there via the `Schemas` alias in
+ * `src/api/schema.ts` — e.g. `type Digest = Schemas['Digest']`. This file
+ * is retired module by module as that happens (plan §A6); already moved:
+ * `lib/gallery.ts`, `pages/Pull.tsx`.
+ *
+ * Until a shape is moved: when you change its endpoint, run `npm run
+ * gen:api` and update the mirror here too. CI's `api-types` job fails if
+ * the committed `schema.d.ts` / `openapi.json` drift from the routes.
  */
 
 export type MediaType = 'photo' | 'video' | 'reel' | 'carousel'
@@ -147,10 +149,8 @@ export interface ItemListResponse {
   page_size: number
 }
 
-export interface ItemIdListResponse {
-  ids: number[]
-  total: number
-}
+// `ItemIdListResponse` now lives in the generated `api/schema.d.ts`
+// (imported via `api/schema.ts` — see `lib/gallery.ts`).
 
 export interface TagUpdateRequest {
   tags: string[]
@@ -326,43 +326,8 @@ export interface CategorizeProgress {
   job_id: number | null
 }
 
-// --- Instagram pull (/api/pull*, opt-in §F) ---
-
-export interface PullSession {
-  /** config.pull.enabled — the whole feature's master switch. */
-  enabled: boolean
-  /** A validated Instagram session is cached on disk. */
-  configured: boolean
-  username: string | null
-  last_verified_at: string | null
-}
-
-export interface PullRunRequest {
-  max_count?: number | null
-  stop_after_known?: number
-  full?: boolean
-}
-
-export interface PullRunResponse {
-  job_id: number | null
-  max_count: number
-}
-
-export interface PullProgress {
-  enabled: boolean
-  configured: boolean
-  job_id: number | null
-  scanned: number
-  new: number
-  downloaded: number
-  imported: number
-  linked: number
-  failed: number
-  stopped_reason: string | null
-  last_status: JobStatus | null
-  error_message: string | null
-  new_item_ids: number[]
-}
+// Instagram pull (/api/pull*) types now come from the generated
+// `api/schema.d.ts` — see `pages/Pull.tsx`.
 
 // --- digests (/api/digests*) ---
 

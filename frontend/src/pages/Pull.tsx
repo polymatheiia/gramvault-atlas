@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError, api } from '../api/client'
-import type { PullProgress, PullRunResponse, PullSession } from '../types'
+import type { Schemas } from '../api/schema'
 
-function formatDate(iso: string | null): string {
+type PullSession = Schemas['PullSessionResponse']
+type PullProgress = Schemas['PullProgress']
+type PullRunResponse = Schemas['PullRunResponse']
+
+function formatDate(iso: string | null | undefined): string {
   if (!iso) return 'never'
   const d = new Date(iso)
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()

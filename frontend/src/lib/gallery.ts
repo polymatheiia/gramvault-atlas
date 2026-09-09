@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import type { ItemIdListResponse, SemanticSearchResponse } from '../types'
+import type { Schemas } from '../api/schema'
+
+type ItemIdListResponse = Schemas['ItemIdListResponse']
+type SemanticSearchResponse = Schemas['SemanticSearchResponse']
 
 /** Gallery filter params that Gallery / Feed / ItemDetail all share. The
  * gallery's own `page` is deliberately excluded — Feed and prev/next span
@@ -60,7 +63,7 @@ export async function fetchSiblingIds(
     let results = res.results
     if (category === UNCATEGORIZED) results = results.filter((r) => r.item.category === null)
     else if (category) results = results.filter((r) => r.item.category === category)
-    return results.map((r) => r.item.id).filter((id): id is number => id !== null)
+    return results.map((r) => r.item.id).filter((id): id is number => id != null)
   }
   const res = await api.get<ItemIdListResponse>('/api/library/item-ids', browseQuery(params), signal)
   return res.ids
