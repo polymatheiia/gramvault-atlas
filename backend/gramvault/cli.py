@@ -41,6 +41,32 @@ def serve(
     )
 
 
+@app.command(name="openapi")
+def dump_openapi(
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Write to this file instead of stdout"
+    ),
+) -> None:
+    """Print the backend's OpenAPI schema as JSON.
+
+    Feeds the frontend's `npm run gen:api` (openapi-typescript), which
+    regenerates `frontend/src/api/schema.d.ts` from the real routes so the
+    hand-written `frontend/src/types.ts` can be retired gradually. Keys are
+    sorted so the output is stable to diff in CI.
+    """
+    import json
+
+    from gramvault.main import create_app
+
+    schema = create_app().openapi()
+    text = json.dumps(schema, indent=2, sort_keys=True) + "\n"
+    if out is not None:
+        out.write_text(text, encoding="utf-8")
+        typer.echo(f"Wrote {out} ({len(schema.get('paths', {}))} paths)")
+    else:
+        typer.echo(text, nl=False)
+
+
 @app.command(name="import")
 def import_export(
     zip_path: Path = typer.Argument(..., help="Path to an Instagram data export ZIP file"),

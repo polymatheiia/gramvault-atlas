@@ -26,6 +26,33 @@ jobs:
       - name: Test (pytest)
         run: pytest backend/tests
 
+  api-types:
+    name: API types in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install backend
+        run: pip install -e .
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Regenerate the OpenAPI schema and TS types
+        run: |
+          gramvault openapi --out frontend/openapi.json
+          cd frontend && npm run gen:api
+
+      - name: Fail if the committed copies are stale (run `gramvault openapi` + `npm run gen:api`)
+        run: git diff --exit-code -- frontend/openapi.json frontend/src/api/schema.d.ts
+
   frontend:
     name: Frontend (Node)
     runs-on: ubuntu-latest

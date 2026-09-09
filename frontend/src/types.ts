@@ -1,9 +1,18 @@
 /**
- * TypeScript mirrors of the shared Pydantic models in
- * `backend/gramvault/models/schemas.py`. Keep these in sync by hand —
- * there is no codegen step (yet). Field names/shapes match the JSON the
- * FastAPI backend serializes (pydantic's default `model_dump(mode="json")`
- * behavior: datetimes as ISO 8601 strings, enums as their string values).
+ * Hand-written TypeScript mirrors of the backend's request/response
+ * shapes. Field names/shapes match the JSON FastAPI serializes (pydantic
+ * `model_dump(mode="json")`: datetimes as ISO 8601 strings, enums as their
+ * string values).
+ *
+ * There is now a generated alternative: `src/api/schema.d.ts`, produced by
+ * `npm run gen:api` (openapi-typescript over `openapi.json`, which
+ * `gramvault openapi --out frontend/openapi.json` refreshes). New code
+ * should prefer types pulled from there — e.g.
+ *   `type Digest = components['schemas']['Digest']`
+ * — and this file is retired module by module as that happens (plan §A6).
+ * Until then, when you change an endpoint, run `npm run gen:api` and, if
+ * the shape lives here, update it too. CI's `api-types` job fails if the
+ * committed `schema.d.ts` / `openapi.json` drift from the routes.
  */
 
 export type MediaType = 'photo' | 'video' | 'reel' | 'carousel'
