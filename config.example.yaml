@@ -66,6 +66,15 @@ export:
   # extra frontmatter keys are always preserved.
   layout: "flat"
 
+# Optional: pull your own *saved* posts straight from Instagram instead of
+# waiting for a data export (integration plan §F). Off by default — it needs
+# a logged-in session, runs against Instagram's private endpoints, and is
+# rate-limited by them. Requires the extra: pip install -e ".[instagram]".
+# pull:
+#   enabled: true
+#   session_dir: "~/.config/instaloader"   # where the session-<user> file is cached
+#   max_default: 400                       # default cap on how far back one pull walks
+
 chunking:
   # Text chunking parameters for embeddings (captions, transcripts, notes).
   chunk_size: 512

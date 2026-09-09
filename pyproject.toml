@@ -25,6 +25,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Pull your own saved posts from Instagram (section F of the integration
+# plan). Off unless `pull.enabled` is set in config.yaml. Install with:
+#   pip install -e ".[instagram]"
+instagram = [
+    "instaloader>=4.14",
+]
 # Dev/test tooling. Install with: pip install -e ".[dev]"
 dev = [
     "pytest>=8.0",

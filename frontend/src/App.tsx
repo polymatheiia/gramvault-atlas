@@ -8,6 +8,7 @@ import { Enrich } from './pages/Enrich'
 import { Gallery } from './pages/Gallery'
 import { Import } from './pages/Import'
 import { ItemDetail } from './pages/ItemDetail'
+import { Pull } from './pages/Pull'
 import { Settings } from './pages/Settings'
 
 function NotFound() {
@@ -26,6 +27,7 @@ function App() {
               <Route path="/items/:id" element={<ItemDetail />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/import" element={<Import />} />
+              <Route path="/pull" element={<Pull />} />
               <Route path="/enrich" element={<Enrich />} />
               <Route path="/categorize" element={<Categorize />} />
               <Route path="/digest" element={<Digest />} />

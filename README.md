@@ -19,6 +19,7 @@ GramVault never talks to Instagram, never scrapes, and never phones home. It rea
 - [Model requirements](#model-requirements)
 - [Getting your Instagram data](#getting-your-instagram-data)
 - [FAQ](#faq)
+- [Pulling your saved posts](#pulling-your-saved-posts)
 - [Privacy](#privacy)
 - [Contributing](#contributing)
 - [License](#license)
@@ -44,6 +45,7 @@ GramVault never talks to Instagram, never scrapes, and never phones home. It rea
 ## Features
 
 - **Import** — drag-and-drop (or `gramvault import <zip>` on the CLI) an Instagram "Download Your Information" JSON export. Own posts, saved posts, photos, videos, and reels are parsed, deduplicated by content hash, and organized into a local library.
+- **Saved-posts pull** *(opt-in)* — instead of waiting for an export, let GramVault walk your saved feed with a logged-in session and pull anything new. Off by default; cookies-only login. See [Pulling your saved posts](#pulling-your-saved-posts).
 - **Enrichment pipeline** — a resumable background pipeline that captions images (`llava`), extracts keyframes from videos/reels (`ffmpeg`) and captions those too, transcribes video/audio (`faster-whisper`), and embeds everything (`nomic-embed-text`) into a local ChromaDB vector store.
 - **Gallery** — browse your whole library with filtering by type, author, and date.
 - **Chat with citations** — ask natural-language questions about your saved content ("what recipes did I save last spring?") and get streamed answers from a local LLM, grounded in hybrid (keyword + semantic) retrieval over your library, with inline `[[item:<id>]]` citation chips linking straight back to the source item.
@@ -198,13 +200,33 @@ Any filename containing the shortcode works; [instaloader](https://instaloader.g
 
 Downloading someone else's media is between you and Instagram's terms of service; GramVault only files what's already on your disk.
 
+**Can GramVault pull my saved posts for me?** Optionally, yes — see [Pulling your saved posts](#pulling-your-saved-posts) below. It's off by default.
+
+## Pulling your saved posts
+
+The supported, no-credentials path is a data export (above). If you'd rather not wait for one every time, GramVault can walk your **saved** feed directly with a logged-in session and pull anything new — the same import + media-link steps, just fed from a live scrape instead of a ZIP.
+
+This is **opt-in and off by default**: it needs your Instagram session, runs against Instagram's private endpoints, and is rate-limited by them. Turn it on deliberately:
+
+1. Install the extra: `pip install -e ".[instagram]"` (adds [instaloader](https://instaloader.github.io/)).
+2. Add to `config.yaml`:
+   ```yaml
+   pull:
+     enabled: true
+   ```
+   and restart the server.
+3. Open the **Pull** page. Make sure you're logged in at instagram.com, then give GramVault the session — either let it read this machine's Firefox cookie store, or paste the instagram.com cookies (`sessionid`, `ds_user_id`, `csrftoken` at minimum). Get them from a browser extension (Cookie-Editor → Export → JSON) or, without one, DevTools → Network → any instagram.com request → Cookies. Login is **cookies only** — no password is ever entered. The session is written to a local `session-<user>` file (`chmod 600`), never to the database.
+4. Set how far back to walk and run it. New items land in the library ready to **Enrich** and **Categorize**.
+
+`gramvault pull --cookies <file>` does the same from the CLI (for cron). Your session cookie is a live credential — if it leaks, revoke it at Instagram → *Settings → Where you're logged in*.
+
 ## Privacy
 
 - **100% local.** Your library, database, vector store, and media files live entirely on your own disk.
 - **No telemetry.** GramVault doesn't collect, transmit, or report usage data anywhere.
-- **No external network calls**, except to `localhost` Ollama for AI inference — which is itself running on your machine.
+- **No external network calls** by default, except to `localhost` Ollama for AI inference — which is itself running on your machine. (Routing an AI task to a hosted provider, or enabling the opt-in Instagram pull, adds calls only to that service.)
 - **Your data never leaves your machine.** There's no cloud sync, no account, no server GramVault talks to on your behalf.
-- **Legitimate input only.** GramVault's only supported input is Instagram's official "Download Your Information" export, which you request and download yourself. There is no scraping, no stored Instagram login/credentials, and nothing here is intended to violate Instagram's Terms of Service.
+- **Legitimate input only.** GramVault's default input is Instagram's official "Download Your Information" export, which you request and download yourself — no scraping, no credentials. The opt-in [saved-posts pull](#pulling-your-saved-posts) (off unless you set `pull.enabled`) is the one exception: it uses a session cookie you provide, stored only in a local `chmod 600` file. Nothing here is intended to violate Instagram's Terms of Service; using the pull feature is your call.
 
 ## Contributing
 

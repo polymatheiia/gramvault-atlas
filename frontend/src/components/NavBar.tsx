@@ -4,6 +4,7 @@ const LINKS = [
   { to: '/', label: 'Gallery', end: true },
   { to: '/chat', label: 'Chat', end: false },
   { to: '/import', label: 'Import', end: false },
+  { to: '/pull', label: 'Pull', end: false },
   { to: '/enrich', label: 'Enrich', end: false },
   { to: '/categorize', label: 'Categorize', end: false },
   { to: '/digest', label: 'Digest', end: false },

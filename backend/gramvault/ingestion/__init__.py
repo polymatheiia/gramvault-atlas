@@ -11,6 +11,8 @@ Public surface (stable — used by both `gramvault.cli` and
       wrapper both the CLI and the API route use)
     - `gramvault.ingestion.linker.link_local_media` (attaches separately
       downloaded media to link-only saved items)
+    - `gramvault.ingestion.instagram` (opt-in §F: pull your own saved posts
+      with a logged-in session, then feed them through import + link)
 """
 
 from __future__ import annotations
@@ -18,6 +20,11 @@ from __future__ import annotations
 from gramvault.ingestion.importer import import_zip
 from gramvault.ingestion.linker import LinkReport, link_local_media
 from gramvault.ingestion.parser import ExportFormatError, ParsedExport, parse_export
+
+# `gramvault.ingestion.instagram` is deliberately NOT imported here: it's the
+# opt-in §F path and pulls in the optional `instaloader` dependency lazily.
+# Import it as a submodule where needed (`from gramvault.ingestion import
+# instagram`).
 
 __all__ = [
     "ExportFormatError",

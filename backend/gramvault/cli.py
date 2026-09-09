@@ -326,6 +326,68 @@ def link_media(
         )
 
 
+@app.command(name="pull")
+def pull_command(
+    cookies: Path | None = typer.Option(
+        None,
+        "--cookies",
+        help="Cookie export file (JSON / Cookie-Editor / Netscape) to connect with. "
+        "Only needed the first time, or after the session goes stale.",
+    ),
+    max_count: int | None = typer.Option(
+        None, "--max", help="How many saved posts to walk back through (default: pull.max_default)"
+    ),
+    stop_after_known: int = typer.Option(
+        5, "--stop-after-known", help="Stop once this many already-saved posts are seen in a row"
+    ),
+    full: bool = typer.Option(
+        False, "--full", help="Walk the whole feed, not just the new-since-last-pull delta"
+    ),
+) -> None:
+    """Pull your own saved Instagram posts into the library (section F).
+
+    Off unless `pull.enabled: true` is set in config.yaml, and needs the
+    optional dependency: `pip install -e ".[instagram]"`. Downloads new
+    saved posts, then runs the same import + media-link steps as
+    `gramvault import` / `gramvault link-media`.
+    """
+    from gramvault.ingestion import instagram
+
+    config = get_config()
+    if not config.pull.enabled:
+        typer.echo("Pulling is off. Set `pull.enabled: true` in config.yaml first.")
+        raise typer.Exit(code=1)
+
+    try:
+        if cookies is not None:
+            if not cookies.exists():
+                typer.echo(f"No such file: {cookies}")
+                raise typer.Exit(code=1)
+            state = instagram.connect_from_cookies(
+                instagram.parse_cookies(cookies.read_text(encoding="utf-8")), config
+            )
+            typer.echo(f"Connected as @{state.username}")
+
+        result = instagram.pull_saved(
+            config,
+            max_count=max_count or config.pull.max_default,
+            stop_after_known=stop_after_known,
+            download_all=full,
+            progress_cb=lambda f: typer.echo(
+                f"  scanned {f['scanned']}  new {f['new']}  downloaded {f['downloaded']}", err=True
+            ),
+        )
+    except instagram.InstagramError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        f"Pull {result.stopped_reason}: {result.new} new saved post(s), "
+        f"{result.downloaded} downloaded, {result.imported} imported, "
+        f"{result.linked} linked{f', {result.failed} failed' if result.failed else ''}."
+    )
+
+
 @app.command(name="init-db")
 def init_db_command() -> None:
     """Create the SQLite database and tables if they don't already exist."""

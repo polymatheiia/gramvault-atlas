@@ -90,6 +90,26 @@ class ServerConfig(BaseModel):
     port: int = 8000
 
 
+class PullConfig(BaseModel):
+    """Instagram "pull my saved posts" behaviour (section F). Opt-in and
+    off by default: pulling from your own saved feed needs a logged-in
+    Instagram session, runs against Instagram's private endpoints, and is
+    rate-limited by them — so it's only enabled deliberately.
+
+    Requires the optional `instaloader` dependency:
+    `pip install -e ".[instagram]"`.
+    """
+
+    # Master switch. While false, the Pull page and every `/api/pull/*`
+    # route that does real work refuse with a friendly 403.
+    enabled: bool = False
+    # Where the Instaloader session file (`session-<username>`) is cached.
+    # Never stored in the DB — it's a live credential.
+    session_dir: str = "~/.config/instaloader"
+    # Default cap on how many saved posts one pull walks back through.
+    max_default: int = 400
+
+
 class ExportConfig(BaseModel):
     """Obsidian export behavior (Agent A6). Additive section — safe
     defaults so existing config.yaml files without an `export:` block
@@ -164,6 +184,7 @@ class Config(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
+    pull: PullConfig = Field(default_factory=PullConfig)
 
     # --- convenience resolved paths (absolute, based on cwd) ---
 
@@ -178,6 +199,10 @@ class Config(BaseModel):
     @property
     def resolved_chroma_dir(self) -> Path:
         return Path(self.paths.chroma_dir).expanduser().resolve()
+
+    @property
+    def resolved_pull_session_dir(self) -> Path:
+        return Path(self.pull.session_dir).expanduser().resolve()
 
     @property
     def resolved_obsidian_vault_dir(self) -> Path | None:

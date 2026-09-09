@@ -312,6 +312,44 @@ export interface CategorizeProgress {
   job_id: number | null
 }
 
+// --- Instagram pull (/api/pull*, opt-in §F) ---
+
+export interface PullSession {
+  /** config.pull.enabled — the whole feature's master switch. */
+  enabled: boolean
+  /** A validated Instagram session is cached on disk. */
+  configured: boolean
+  username: string | null
+  last_verified_at: string | null
+}
+
+export interface PullRunRequest {
+  max_count?: number | null
+  stop_after_known?: number
+  full?: boolean
+}
+
+export interface PullRunResponse {
+  job_id: number | null
+  max_count: number
+}
+
+export interface PullProgress {
+  enabled: boolean
+  configured: boolean
+  job_id: number | null
+  scanned: number
+  new: number
+  downloaded: number
+  imported: number
+  linked: number
+  failed: number
+  stopped_reason: string | null
+  last_status: JobStatus | null
+  error_message: string | null
+  new_item_ids: number[]
+}
+
 // --- digests (/api/digests*) ---
 
 export interface DigestTemplateInfo {
