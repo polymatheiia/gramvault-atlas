@@ -152,10 +152,19 @@ class MediaLink(NamedTuple):
     # copy failed) — interpretation depends on `embed`.
     target: str
     embed: bool
+    # For a copied video: an Obsidian-relative path to a still poster frame
+    # to embed *above* a plain link to the clip (inline video is unreliable
+    # on mobile Obsidian — plan §G6). None for photos and link-mode media.
+    poster: str | None = None
 
 
 def _media_type_value(item: Item) -> str:
     media_type = item.media_type
+    return media_type.value if hasattr(media_type, "value") else str(media_type)
+
+
+def _media_file_type_value(media_file: MediaFile) -> str:
+    media_type = media_file.media_type
     return media_type.value if hasattr(media_type, "value") else str(media_type)
 
 
@@ -255,10 +264,14 @@ def _build_body(item: Item, media_links: list[MediaLink]) -> str:
     if media_links:
         media_lines = []
         for link in media_links:
-            if link.embed:
+            label = _media_file_type_value(link.media_file)
+            if link.poster:
+                # Poster still + a plain link to the clip (§G6).
+                media_lines.append(f"![[{link.poster}]]\n\n[▶ {label}]({link.target})")
+            elif link.embed:
                 media_lines.append(f"![[{link.target}]]")
             else:
-                media_lines.append(f"[{link.media_file.media_type.value}]({link.target})")
+                media_lines.append(f"[{label}]({link.target})")
         sections.append("## Media\n\n" + "\n\n".join(media_lines))
 
     if item.permalink:

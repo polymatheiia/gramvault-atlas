@@ -53,7 +53,8 @@ from gramvault.export.markdown_builder import (
     user_tail,
 )
 from gramvault.export.overview_builder import build_dashboard_markdown
-from gramvault.models.schemas import Item
+from gramvault.export.poster import poster_frame
+from gramvault.models.schemas import Item, MediaFile
 
 MEDIA_SUBDIR_NAME = "media"
 DIGESTS_SUBDIR_NAME = "_digests"
@@ -132,29 +133,66 @@ def _scan_existing_notes_by_gramvault_id(target_dir: Path) -> dict[int, Path]:
     return mapping
 
 
+def _resolve_media_src(config: Config, file_path: str) -> Path:
+    """Absolute source path for a `MediaFile.file_path`, which is stored
+    relative to the library dir (older rows may be absolute)."""
+    path = Path(file_path).expanduser()
+    if path.is_absolute():
+        return path
+    return config.resolved_library_dir / path
+
+
+def _is_video(media_file: MediaFile) -> bool:
+    media_type = media_file.media_type
+    return (media_type.value if hasattr(media_type, "value") else str(media_type)) == "video"
+
+
+def _poster_is_stale(poster_path: Path, src_path: Path) -> bool:
+    if not poster_path.is_file():
+        return True
+    try:
+        return poster_path.stat().st_mtime < src_path.stat().st_mtime
+    except OSError:
+        return True
+
+
 def _copy_or_link_media(
-    item: Item, media_dir: Path, media_mode: str, result: ExportResult
+    config: Config, item: Item, media_dir: Path, result: ExportResult
 ) -> list[MediaLink]:
     media_links: list[MediaLink] = []
+    media_mode = config.export.media_mode
     for media_file in item.media_files:
-        if media_mode == "copy":
-            src_path = Path(media_file.file_path)
-            if src_path.is_file():
-                media_dir.mkdir(parents=True, exist_ok=True)
-                dest_name = media_filename(item, media_file)
-                dest_path = media_dir / dest_name
-                try:
-                    shutil.copy2(src_path, dest_path)
-                    result.media_files_copied += 1
-                    media_links.append(
-                        MediaLink(media_file, f"{MEDIA_SUBDIR_NAME}/{dest_name}", embed=True)
-                    )
-                    continue
-                except OSError:
-                    pass  # fall through to a plain link to the original path
-            media_links.append(MediaLink(media_file, media_file.file_path, embed=False))
+        src_path = _resolve_media_src(config, media_file.file_path)
+        if media_mode == "copy" and src_path.is_file():
+            media_dir.mkdir(parents=True, exist_ok=True)
+            dest_name = media_filename(item, media_file)
+            try:
+                shutil.copy2(src_path, media_dir / dest_name)
+                result.media_files_copied += 1
+            except OSError:
+                media_links.append(MediaLink(media_file, str(src_path), embed=False))
+                continue
+
+            poster_target: str | None = None
+            if _is_video(media_file):
+                stem = dest_name.rsplit(".", 1)[0] if "." in dest_name else dest_name
+                poster_name = f"{stem}.poster.jpg"
+                poster_path = media_dir / poster_name
+                if _poster_is_stale(poster_path, src_path):
+                    poster_frame(src_path, poster_path)
+                if poster_path.is_file():
+                    poster_target = f"{MEDIA_SUBDIR_NAME}/{poster_name}"
+
+            media_links.append(
+                MediaLink(
+                    media_file,
+                    f"{MEDIA_SUBDIR_NAME}/{dest_name}",
+                    embed=True,
+                    poster=poster_target,
+                )
+            )
         else:
-            media_links.append(MediaLink(media_file, media_file.file_path, embed=False))
+            media_links.append(MediaLink(media_file, str(src_path), embed=False))
     return media_links
 
 
@@ -165,7 +203,6 @@ def export_items(
     see module docstring."""
     target_dir = resolve_export_target(config, vault_subfolder)
     media_dir = target_dir / MEDIA_SUBDIR_NAME
-    media_mode = config.export.media_mode
 
     result = ExportResult(target_dir=target_dir)
     existing_notes_by_id = _scan_existing_notes_by_gramvault_id(target_dir)
@@ -198,7 +235,7 @@ def export_items(
             stale_path.unlink(missing_ok=True)
 
         existed_before = source_text is not None
-        media_links = _copy_or_link_media(item, media_dir, media_mode, result)
+        media_links = _copy_or_link_media(config, item, media_dir, result)
         note_text = build_note_markdown(item, media_links, existing_text=source_text)
         note_path.write_text(note_text, encoding="utf-8")
 

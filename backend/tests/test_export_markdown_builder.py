@@ -218,6 +218,20 @@ class TestBuildNoteMarkdown:
         note = build_note_markdown(item, [link])
         assert "![[media/42_0.jpg]]" in note
 
+    def test_video_with_poster_embeds_still_above_a_plain_link(self) -> None:
+        item = _make_item(
+            media_files=[
+                MediaFile(id=1, item_id=42, file_path="clip.mp4", media_type=FileMediaType.VIDEO)
+            ]
+        )
+        link = MediaLink(
+            item.media_files[0], "media/42_0.mp4", embed=True, poster="media/42_0.poster.jpg"
+        )
+        note = build_note_markdown(item, [link])
+        assert "![[media/42_0.poster.jpg]]" in note
+        assert "[▶ video](media/42_0.mp4)" in note
+        assert "![[media/42_0.mp4]]" not in note  # the clip is not embedded
+
     def test_link_only_media_rendered_as_plain_link(self) -> None:
         item = _make_item(
             media_files=[

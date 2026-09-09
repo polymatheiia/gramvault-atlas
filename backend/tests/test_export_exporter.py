@@ -292,6 +292,66 @@ class TestMediaModes:
         note_text = (vault_dir / "GramVault" / note_filename(item)).read_text(encoding="utf-8")
         assert "![[media/" in note_text
 
+    def test_copy_mode_video_gets_a_poster_frame(self, tmp_path: Path, monkeypatch) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        source_media = tmp_path / "clip.mp4"
+        source_media.write_bytes(b"fake mp4 bytes")
+        config = _config(tmp_path, vault_dir=vault_dir, media_mode="copy")
+
+        calls: list[Path] = []
+
+        def fake_poster(src: Path, dest: Path) -> bool:
+            calls.append(Path(src))
+            Path(dest).write_bytes(b"\xff\xd8 fake jpg")
+            return True
+
+        monkeypatch.setattr("gramvault.export.exporter.poster_frame", fake_poster)
+
+        item = _item(
+            1,
+            media_files=[
+                MediaFile(
+                    id=1, item_id=1, file_path=str(source_media), media_type=FileMediaType.VIDEO
+                )
+            ],
+        )
+        export_items(config, [item])
+
+        assert calls == [source_media]
+        poster = vault_dir / "GramVault" / "media" / "1_0.poster.jpg"
+        assert poster.is_file()
+        note_text = (vault_dir / "GramVault" / note_filename(item)).read_text(encoding="utf-8")
+        assert "![[media/1_0.poster.jpg]]" in note_text
+        assert "[▶ video](media/1_0.mp4)" in note_text
+
+        # Re-export: the poster already exists and is newer than the source,
+        # so ffmpeg is not run again.
+        calls.clear()
+        export_items(config, [item])
+        assert calls == []
+
+    def test_by_category_layout_resolves_library_relative_media(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir, media_mode="copy")
+        # A row whose file_path is stored relative to the library dir.
+        lib_media = config.resolved_library_dir / "media" / "aa" / "pic.jpg"
+        lib_media.parent.mkdir(parents=True)
+        lib_media.write_bytes(b"fake jpg bytes")
+
+        item = _item(
+            1,
+            media_files=[
+                MediaFile(
+                    id=1, item_id=1, file_path="media/aa/pic.jpg", media_type=FileMediaType.PHOTO
+                )
+            ],
+        )
+        result = export_items(config, [item])
+        assert result.media_files_copied == 1
+        assert list((vault_dir / "GramVault" / "media").glob("*.jpg"))
+
     def test_link_mode_does_not_copy_and_links_original(self, tmp_path: Path) -> None:
         vault_dir = tmp_path / "vault"
         vault_dir.mkdir()
