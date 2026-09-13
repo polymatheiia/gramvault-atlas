@@ -52,6 +52,14 @@ _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 _MIGRATION_NAME_RE = re.compile(r"^(\d+)_.+\.(sql|py)$")
 
+# Paths whose schema has already been brought current in this process.
+# `session_scope()` used to call `init_db()` — a `sqlite_master` lookup plus,
+# on every call, a directory scan of `db/migrations/` — on every connection,
+# i.e. on every request and every job progress/cancellation check. Once a
+# path has been initialised in-process, further opens skip straight to the
+# connection: the schema can't drift under us within a single run.
+_initialized_paths: set[str] = set()
+
 # GramVault's default category taxonomy for a saved-reels library. The
 # single source of truth — the `categories` table is seeded from this on a
 # fresh database (`init_db`) and by migration `002_categories.py` on an
@@ -231,7 +239,10 @@ def session_scope(config: Config | None = None) -> Iterator[sqlite3.Connection]:
     """
     conn = get_connection(config)
     try:
-        init_db(conn)
+        db_path = str(get_db_path(config))
+        if db_path not in _initialized_paths:
+            init_db(conn)
+            _initialized_paths.add(db_path)
         yield conn
         conn.commit()
     except Exception:
