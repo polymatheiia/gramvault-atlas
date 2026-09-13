@@ -12,7 +12,12 @@ from pathlib import Path
 
 from gramvault.config import Config
 from gramvault.db.session import session_scope
-from gramvault.ingestion.importer import import_zip
+from gramvault.ingestion.importer import (
+    cancel_import_job,
+    create_import_job,
+    import_zip,
+    run_import,
+)
 from gramvault.models.schemas import JobStatus
 
 
@@ -274,6 +279,53 @@ def test_import_label_values_export_stores_caption_author_and_tags(
             ("obiad", "hashtag"),
             ("przepis", "hashtag"),
         ]
+
+
+# --- audit finding R2: cooperative cancellation -----------------------------
+
+
+def _write_many_saved_export(tmp_path: Path, count: int) -> Path:
+    entries = [
+        {
+            "title": "someone",
+            "string_list_data": [
+                {
+                    "href": f"https://www.instagram.com/p/CANCEL{i:04d}/",
+                    "timestamp": 1700000000 + i,
+                }
+            ],
+        }
+        for i in range(count)
+    ]
+    zip_path = tmp_path / "big_export.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr(
+            "your_instagram_activity/saved/saved_posts.json",
+            json.dumps({"saved_saved_media": entries}),
+        )
+    return zip_path
+
+
+def test_run_import_honours_cancel_requested_mid_run(tmp_path: Path, tmp_config: Config) -> None:
+    """A cancel requested before/while run_import is looping stops it well
+    short of the full item count, rather than the cancel flag only being
+    checked (uselessly) after the whole loop finishes — the pre-fix
+    behaviour, since import used to run synchronously to completion
+    before a cancel request could ever be seen."""
+    zip_path = _write_many_saved_export(tmp_path, 200)
+    job = create_import_job(zip_path, tmp_config)
+    assert job.id is not None
+
+    # Simulate a cancel arriving before the run loop's first checkpoint.
+    cancelled = cancel_import_job(job.id, tmp_config)
+    assert cancelled is not None and cancelled.status == JobStatus.PENDING
+
+    result = run_import(job.id, zip_path, tmp_config)
+
+    assert result.status == JobStatus.FAILED
+    assert result.error_message == "cancelled by user"
+    assert result.processed_items < result.total_items
+    assert result.total_items == 200
 
 
 def test_reimport_label_values_export_dedupes(tmp_path: Path, tmp_config: Config) -> None:

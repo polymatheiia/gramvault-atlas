@@ -76,6 +76,15 @@ export:
 #   session_dir: "~/.config/instaloader"   # where the session-<user> file is cached
 #   max_default: 400                       # default cap on how far back one pull walks
 
+# Caps on export-ZIP handling (audit finding S9) — a hostile ZIP can claim
+# any compressed size for a member and inflate it far beyond that once
+# read, so these are checked before a member's bytes are decompressed.
+# import:
+#   max_upload_bytes: 4294967296    # 4 GiB — whole upload
+#   max_member_bytes: 2147483648    # 2 GiB — one member, decompressed
+#   max_compression_ratio: 200      # file_size / compress_size above this is a bomb
+#   max_metadata_bytes: 209715200   # 200 MiB — e.g. saved_posts.json
+
 chunking:
   # Text chunking parameters for embeddings (captions, transcripts, notes).
   chunk_size: 512

@@ -84,3 +84,55 @@ def test_organize_zip_member_accepts_and_reextensions_real_jpeg(tmp_path: Path) 
     assert result.file_path.endswith(".jpg")
     assert Path(result.file_path).suffix in ALLOWED_MEDIA_EXTENSIONS
     assert (library_dir / result.file_path).is_file()
+
+
+# --- audit finding S9: decompression-bomb / OOM caps ------------------------
+
+
+def test_organize_zip_member_rejects_member_over_declared_size_cap(tmp_path: Path) -> None:
+    zip_path = tmp_path / "export.zip"
+    payload = _JPEG + b"\x00" * 1000
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("media/x.jpg", payload)
+    library_dir = tmp_path / "library"
+    with zipfile.ZipFile(zip_path) as zf:
+        # The real (decompressed) size is ~1KB; cap it well below that so
+        # the member is rejected from the zip directory's declared
+        # file_size alone, before any bytes are streamed out.
+        result = organize_zip_member(zf, "media/x.jpg", library_dir, max_bytes=100)
+    assert result is None
+    assert not any((library_dir / "media").rglob("*")) if (library_dir / "media").exists() else True
+
+
+def test_organize_zip_member_rejects_decompression_bomb_by_ratio(tmp_path: Path) -> None:
+    zip_path = tmp_path / "export.zip"
+    # Highly compressible payload: real media bytes never compress anywhere
+    # near this ratio, so a member that does is treated as a bomb and
+    # skipped even though its declared file_size alone is under the cap.
+    bomb = _JPEG + (b"\x00" * 2_000_000)
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("media/bomb.jpg", bomb)
+    library_dir = tmp_path / "library"
+    with zipfile.ZipFile(zip_path) as zf:
+        info = zf.getinfo("media/bomb.jpg")
+        assert info.file_size / max(info.compress_size, 1) > 200  # sanity: really is bomb-shaped
+        result = organize_zip_member(
+            zf, "media/bomb.jpg", library_dir, max_bytes=10_000_000, max_ratio=200
+        )
+    assert result is None
+
+
+def test_organize_zip_member_streams_within_caps_successfully(tmp_path: Path) -> None:
+    zip_path = tmp_path / "export.zip"
+    payload = _JPEG + b"\x01\x02\x03" * 500_000  # ~1.5MB, not bomb-shaped, under caps
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("media/big.jpg", payload)
+    library_dir = tmp_path / "library"
+    with zipfile.ZipFile(zip_path) as zf:
+        result = organize_zip_member(
+            zf, "media/big.jpg", library_dir, max_bytes=10_000_000, max_ratio=200
+        )
+    assert result is not None
+    assert (library_dir / result.file_path).read_bytes() == payload
+    # No leftover temp files alongside the final hashed name.
+    assert list((library_dir / "media").glob("tmp*")) == []

@@ -434,7 +434,30 @@ def _resolve_zip_member(uri: str, names_lower_map: dict[str, str]) -> str | None
     return None
 
 
-def _parse_own_posts(zf: zipfile.ZipFile, names: list[str]) -> tuple[list[OwnPost], list[str]]:
+# Default cap on a metadata JSON member (saved_posts.json, posts_N.json).
+# Every real export's is a few MB at most; a member this large is almost
+# certainly abuse (audit finding S9) and reading it whole would otherwise
+# have no size limit at all.
+_DEFAULT_MAX_METADATA_BYTES = 200 * 1024 * 1024  # 200 MiB
+
+
+def _capped_read(zf: zipfile.ZipFile, member_name: str, max_bytes: int) -> bytes | None:
+    """`zf.read(member_name)`, but refusing to decompress a member whose
+    declared size exceeds `max_bytes`. Returns None (never raises) if the
+    member is missing or over the cap, so the caller can skip it with a
+    warning instead of the whole import failing."""
+    try:
+        info = zf.getinfo(member_name)
+    except KeyError:
+        return None
+    if info.file_size > max_bytes:
+        return None
+    return zf.read(member_name)
+
+
+def _parse_own_posts(
+    zf: zipfile.ZipFile, names: list[str], *, max_metadata_bytes: int = _DEFAULT_MAX_METADATA_BYTES
+) -> tuple[list[OwnPost], list[str]]:
     warnings: list[str] = []
     matches = _find_all_matches(names, OWN_POSTS_JSON_GLOBS)
     if not matches:
@@ -444,8 +467,12 @@ def _parse_own_posts(zf: zipfile.ZipFile, names: list[str]) -> tuple[list[OwnPos
     posts: list[OwnPost] = []
 
     for member in matches:
+        raw = _capped_read(zf, member, max_metadata_bytes)
+        if raw is None:
+            warnings.append(f"Skipped '{member}': missing or larger than the metadata size cap.")
+            continue
         try:
-            data = json.loads(zf.read(member).decode("utf-8"))
+            data = json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             warnings.append(f"Skipped '{member}': couldn't parse as JSON ({exc}).")
             continue
@@ -540,7 +567,9 @@ def _parse_own_posts(zf: zipfile.ZipFile, names: list[str]) -> tuple[list[OwnPos
 # --- top-level entry point -------------------------------------------------
 
 
-def parse_export(zip_path: Path) -> ParsedExport:
+def parse_export(
+    zip_path: Path, *, max_metadata_bytes: int = _DEFAULT_MAX_METADATA_BYTES
+) -> ParsedExport:
     """Parse an Instagram data export ZIP into a `ParsedExport`.
 
     Raises `ExportFormatError` (with a clear, user-facing message) if the
@@ -564,10 +593,15 @@ def parse_export(zip_path: Path) -> ParsedExport:
 
         saved_member = _find_first_match(names, SAVED_POSTS_JSON_GLOBS)
         saved_items: list[SavedItem] = []
+        own_posts, warnings = _parse_own_posts(zf, names, max_metadata_bytes=max_metadata_bytes)
         if saved_member is not None:
-            saved_items = _parse_saved_posts_json(zf.read(saved_member), saved_member)
-
-        own_posts, warnings = _parse_own_posts(zf, names)
+            raw = _capped_read(zf, saved_member, max_metadata_bytes)
+            if raw is None:
+                warnings.append(
+                    f"Skipped '{saved_member}': larger than the metadata size cap."
+                )
+            else:
+                saved_items = _parse_saved_posts_json(raw, saved_member)
 
         if saved_member is None and not own_posts:
             html_member = _find_first_match(

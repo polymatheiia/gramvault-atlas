@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS import_jobs (
     error_message       TEXT,
     started_at          TEXT,
     finished_at         TEXT,
-    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+    cancel_requested    INTEGER NOT NULL DEFAULT 0
 );
 
 -- Chat sessions + messages. Agent A4 owns the actual RAG logic; this is

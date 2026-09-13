@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import time
 import zipfile
 from pathlib import Path
 
@@ -20,6 +21,24 @@ def _fake_export_bytes(entries: list[dict]) -> bytes:
             json.dumps({"saved_saved_media": entries}),
         )
     return buf.getvalue()
+
+
+def _wait_for_job(client: TestClient, job_id: int, *, timeout: float = 5.0) -> dict:
+    """Poll GET /api/import/jobs/{id} until it reaches a terminal status.
+
+    Import now runs in a background thread (audit finding R2) rather than
+    finishing before the upload response is returned, so a test that
+    cares about the final state has to poll for it exactly like the real
+    frontend does.
+    """
+    deadline = time.monotonic() + timeout
+    body: dict = {}
+    while time.monotonic() < deadline:
+        body = client.get(f"/api/import/jobs/{job_id}").json()
+        if body["status"] in ("done", "failed", "cancelled"):
+            return body
+        time.sleep(0.02)
+    raise AssertionError(f"import job {job_id} didn't finish within {timeout}s: {body}")
 
 
 def test_upload_export_creates_running_or_done_job(client: TestClient) -> None:
@@ -40,6 +59,9 @@ def test_upload_export_creates_running_or_done_job(client: TestClient) -> None:
 
     assert response.status_code == 202
     body = response.json()
+    assert body["status"] in ("pending", "running")
+
+    body = _wait_for_job(client, body["id"])
     assert body["status"] == "done"
     assert body["total_items"] == 1
     assert body["processed_items"] == 1
@@ -58,7 +80,7 @@ def test_upload_export_wrong_format_returns_failed_job_not_500(client: TestClien
     # The endpoint itself succeeds (202) -- the *job* records the failure,
     # so the frontend can show it inline via job.status/error_message.
     assert response.status_code == 202
-    body = response.json()
+    body = _wait_for_job(client, response.json()["id"])
     assert body["status"] == "failed"
     assert body["error_message"]
 
@@ -70,7 +92,7 @@ def test_upload_export_not_a_zip_returns_failed_job(client: TestClient) -> None:
     )
 
     assert response.status_code == 202
-    body = response.json()
+    body = _wait_for_job(client, response.json()["id"])
     assert body["status"] == "failed"
     assert "zip" in body["error_message"].lower()
 
@@ -128,6 +150,7 @@ def test_cancel_already_finished_job_is_a_noop(client: TestClient) -> None:
         files={"file": ("export.zip", zip_bytes, "application/zip")},
     )
     job_id = upload_response.json()["id"]
+    _wait_for_job(client, job_id)
 
     cancel_response = client.post(f"/api/import/jobs/{job_id}/cancel")
     assert cancel_response.status_code == 200
@@ -145,6 +168,6 @@ def test_sample_fixture_zip_uploads_successfully(client: TestClient) -> None:
         )
 
     assert response.status_code == 202
-    body = response.json()
+    body = _wait_for_job(client, response.json()["id"])
     assert body["status"] == "done"
     assert body["total_items"] == 3

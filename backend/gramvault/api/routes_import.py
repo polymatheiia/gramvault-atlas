@@ -12,11 +12,12 @@ behind both entry points.
 
 from __future__ import annotations
 
-import shutil
+import asyncio
+import logging
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from gramvault.api.deps import get_config_dependency
@@ -25,53 +26,94 @@ from gramvault.ingestion import importer
 from gramvault.ingestion.parser import ExportFormatError
 from gramvault.models.schemas import ImportJob, JobStatus
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/import", tags=["import"])
+
+# Read/write chunk size while streaming an upload to disk.
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 class ImportJobListResponse(BaseModel):
     jobs: list[ImportJob]
 
 
+async def _stream_upload_to_disk(file: UploadFile, dest: Path, max_bytes: int) -> None:
+    """Write `file` to `dest` in chunks, refusing once `max_bytes` is
+    exceeded rather than buffering an unbounded upload (audit finding S9
+    covered ZIP members; an upload with no cap at all is the same class
+    of problem one level up). Raises HTTPException(413) and removes the
+    partial file if the cap is hit."""
+    total = 0
+    try:
+        with dest.open("wb") as out:
+            while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Upload exceeds the {max_bytes} byte limit (import.max_upload_bytes).",
+                    )
+                out.write(chunk)
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        raise
+    finally:
+        await file.close()
+
+
+async def _run_import_in_background(job_id: int, dest: Path, config: Config) -> None:
+    """Background-task entry point: runs the (blocking) import in a worker
+    thread so it never holds up the event loop (audit finding R2), then
+    cleans up the staged upload on success. Never raises — a failure is
+    recorded on the job row, same contract as `api.jobs.run`."""
+    try:
+        job = await asyncio.to_thread(importer.run_import, job_id, dest, config)
+    except Exception as exc:  # noqa: BLE001 - any failure marks the job failed
+        logger.exception("import job %s failed", job_id)
+        job = importer.fail_job(job_id, f"Unexpected error during import: {exc}", config)
+    if job.status == JobStatus.DONE:
+        dest.unlink(missing_ok=True)
+
+
 @router.post("/upload", response_model=ImportJob, status_code=202)
 async def upload_export(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Instagram data export ZIP file"),
     config: Config = Depends(get_config_dependency),
 ) -> ImportJob:
-    """Upload an Instagram export ZIP and run the import.
+    """Upload an Instagram export ZIP and start the import in the background.
 
     The upload is saved under `config.resolved_imports_dir` (never
     trusting the client-supplied filename beyond its basename) — outside
     `library_dir`, since that's served at `/media` and a "Download Your
     Information" export can contain far more than saved posts (audit
-    finding S8). Import runs synchronously for v1 — a saved-posts+media
-    ZIP processes fast enough that a background queue isn't worth the
-    extra moving parts yet; A3 owns the (separately long-running)
-    enrichment background queue.
+    finding S8).
+
+    Returns immediately with the job in `pending`/`running` state; the
+    actual parse-and-write work runs in a background thread
+    (`asyncio.to_thread`) so a large media-bearing export no longer
+    blocks every other request — including `/api/health` and job
+    polling — for its whole duration (audit finding R2). Poll
+    `GET /api/import/jobs/{id}` for progress, or
+    `POST /api/import/jobs/{id}/cancel` to stop it.
 
     A ZIP that doesn't look like a real Instagram export doesn't raise an
-    HTTP error here — it comes back as a normal `ImportJob` with
-    `status="failed"` and a friendly `error_message`, so the frontend can
-    show it inline rather than having to special-case a 4xx/5xx. The
-    uploaded ZIP is deleted after a successful import; kept on failure so
-    it can be inspected/retried.
+    HTTP error here — the job ends up `status="failed"` with a friendly
+    `error_message`, so the frontend can show it inline rather than
+    having to special-case a 4xx/5xx. The uploaded ZIP is deleted after a
+    successful import; kept on failure so it can be inspected/retried.
     """
     safe_name = Path(file.filename or "export.zip").name or "export.zip"
     imports_dir = config.resolved_imports_dir
     imports_dir.mkdir(parents=True, exist_ok=True)
     dest = imports_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
 
-    with dest.open("wb") as out:
-        shutil.copyfileobj(file.file, out)
-    await file.close()
+    await _stream_upload_to_disk(file, dest, config.import_.max_upload_bytes)
 
     job = importer.create_import_job(dest, config)
     assert job.id is not None
-    try:
-        job = importer.run_import(job.id, dest, config)
-    except Exception as exc:  # pragma: no cover - defensive catch-all
-        job = importer.fail_job(job.id, f"Unexpected error during import: {exc}", config)
-    if job.status == JobStatus.DONE:
-        dest.unlink(missing_ok=True)
+    background_tasks.add_task(_run_import_in_background, job.id, dest, config)
     return job
 
 

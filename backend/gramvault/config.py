@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Environment variable that points at the YAML config file to load.
 CONFIG_PATH_ENV_VAR = "GRAMVAULT_CONFIG_PATH"
@@ -133,6 +133,27 @@ class ExportConfig(BaseModel):
     layout: Literal["flat", "by-category", "by-date"] = "flat"
 
 
+class ImportConfig(BaseModel):
+    """Caps on export-ZIP handling (audit finding S9). Defaults are
+    generous enough for a real "Download Your Information" export (which
+    can run into the low GBs across many videos) while still bounding a
+    single request's worst case: a hostile ZIP can claim any size for a
+    member's *compressed* bytes and inflate it far beyond that once read."""
+
+    # Reject the whole upload before it's fully received if the client
+    # declares (or ends up sending) more than this many bytes.
+    max_upload_bytes: int = 4 * 1024 * 1024 * 1024  # 4 GiB
+    # Per-member cap on *decompressed* size, checked against the zip
+    # directory's declared `file_size` before any bytes are read.
+    max_member_bytes: int = 2 * 1024 * 1024 * 1024  # 2 GiB
+    # `file_size / compress_size` above this is treated as a decompression
+    # bomb and the member is skipped rather than expanded.
+    max_compression_ratio: int = 200
+    # Cap on a metadata JSON member (e.g. `saved_posts.json`) — these are
+    # small in every real export; a huge one is almost certainly abuse.
+    max_metadata_bytes: int = 200 * 1024 * 1024  # 200 MiB
+
+
 ProviderKind = Literal["ollama", "openai", "anthropic"]
 
 # Tasks that can be routed to a provider independently.
@@ -182,6 +203,11 @@ class AuthConfig(BaseModel):
 
 
 class Config(BaseModel):
+    # `import` is a Python keyword, so the field is `import_` in code;
+    # `populate_by_name` lets it also be constructed as `import_=` (tests,
+    # `Config(...)` call sites) rather than only via the `import:` YAML alias.
+    model_config = ConfigDict(populate_by_name=True)
+
     paths: PathsConfig = Field(default_factory=PathsConfig)
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     ollama: OllamaConfig = Field(default_factory=OllamaConfig)
@@ -193,6 +219,7 @@ class Config(BaseModel):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
     pull: PullConfig = Field(default_factory=PullConfig)
+    import_: ImportConfig = Field(default_factory=ImportConfig, alias="import")
 
     # --- convenience resolved paths (absolute, based on cwd) ---
 
