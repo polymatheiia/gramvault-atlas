@@ -89,3 +89,20 @@ video:
 server:
   host: "127.0.0.1"
   port: 8000
+  # Extra Host header values to accept, beyond localhost/127.0.0.1/[::1]
+  # and `host` itself — needed when a reverse proxy (Caddy, nginx, a
+  # Tailscale MagicDNS name) forwards a request with a different Host,
+  # e.g. behind Caddy serving `https://gramvault.example.lab`:
+  #   allowed_hosts: ["gramvault.example.lab"]
+  allowed_hosts: []
+
+auth:
+  # Bearer token for /api/* (see the Settings -> Security tab, or
+  # `gramvault token show|rotate`). `gramvault serve` generates one on
+  # first run if this is unset and `disabled` below is false.
+  token: null
+  # Explicit opt-out of the auto-generated-token bootstrap, for a
+  # deliberately open deployment (e.g. already behind a VPN/tailnet you
+  # trust). Binding a non-loopback host still refuses to start unless
+  # this is true or `serve --insecure` is passed.
+  disabled: false

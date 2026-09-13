@@ -67,5 +67,13 @@ def client(tmp_config: Config) -> Iterator[TestClient]:
     per-request dependency your feature area adds."""
     app = create_app(tmp_config)
     app.dependency_overrides[get_config_dependency] = lambda: tmp_config
-    with TestClient(app) as test_client:
+    # base_url must resolve to a Host TrustedHostMiddleware accepts (its
+    # default "testserver" isn't 127.0.0.1/localhost/config.server.host),
+    # and the client header is what CrossSiteGuard requires on non-GET
+    # requests from a legitimate same-origin caller — see gramvault.main's
+    # Host allowlist and gramvault.api.csrf (audit finding S2). A test that
+    # wants to exercise the *rejection* path overrides these per-request.
+    with TestClient(
+        app, base_url="http://127.0.0.1", headers={"X-GramVault-Client": "1"}
+    ) as test_client:
         yield test_client

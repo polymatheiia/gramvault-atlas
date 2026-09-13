@@ -38,7 +38,63 @@ class OrganizedMediaFile:
     checksum: str  # full sha256 hex digest
 
 
-def _write_deduped(data: bytes, ext: str, library_dir: Path) -> OrganizedMediaFile:
+# Extensions the library ever stores/serves. Deliberately excludes .html,
+# .svg, .xhtml and anything else a browser would execute as a document —
+# see audit finding S3: a crafted export could otherwise plant an HTML
+# page under /media and have it served on the app's own origin.
+ALLOWED_MEDIA_EXTENSIONS = frozenset(
+    {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif", ".mp4", ".mov", ".m4v", ".webm"}
+)
+
+# (magic bytes, extension) pairs checked against a member's leading bytes.
+# A member that matches none of these — including a RIFF container that
+# isn't really WebP — is rejected outright, regardless of what extension
+# the zip member or export JSON claimed.
+_MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xd8\xff", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", ".png"),
+    (b"GIF8", ".gif"),
+    (b"\x1a\x45\xdf\xa3", ".webm"),
+)
+
+# ISO-BMFF (bytes 4:8 == b"ftyp") major brands, keyed to the extension they
+# actually are — HEIC/HEIF, QuickTime .mov, and everything else MPEG-4
+# share this container, so the brand at bytes 8:12 is the only way to tell
+# them apart. Without this, every iPhone photo would be mis-stored as a
+# playable-nowhere ".mp4".
+_ISO_BMFF_BRANDS: dict[bytes, str] = {
+    b"heic": ".heic",
+    b"heix": ".heic",
+    b"heim": ".heic",
+    b"heis": ".heic",
+    b"hevc": ".heic",
+    b"hevx": ".heic",
+    b"mif1": ".heif",
+    b"msf1": ".heif",
+    b"qt  ": ".mov",
+    b"M4V ": ".m4v",
+    b"M4VH": ".m4v",
+    b"M4VP": ".m4v",
+}
+
+
+def sniff_extension(head: bytes) -> str | None:
+    """Identify a media file by its magic bytes, never by a caller-supplied
+    extension. Returns None for anything unrecognised."""
+    for magic, ext in _MAGIC_SIGNATURES:
+        if head.startswith(magic):
+            return ext
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return ".webp"
+    if head[4:8] == b"ftyp":  # ISO-BMFF container
+        return _ISO_BMFF_BRANDS.get(head[8:12], ".mp4")
+    return None
+
+
+def _write_deduped(data: bytes, library_dir: Path) -> OrganizedMediaFile | None:
+    ext = sniff_extension(data[:16])
+    if ext is None or ext not in ALLOWED_MEDIA_EXTENSIONS:
+        return None
     digest = hashlib.sha256(data).hexdigest()
     subdir = library_dir / "media" / digest[:2]
     subdir.mkdir(parents=True, exist_ok=True)
@@ -51,16 +107,17 @@ def _write_deduped(data: bytes, ext: str, library_dir: Path) -> OrganizedMediaFi
 def organize_zip_member(
     zf: zipfile.ZipFile, member_name: str, library_dir: Path
 ) -> OrganizedMediaFile | None:
-    """Read `member_name` out of an already-open ZIP, hash it, and write it
-    (deduped) under `library_dir/media/...`. Returns `None` if the member
-    can't be read (missing/corrupt entry) rather than raising, so one bad
-    media reference doesn't abort the whole import."""
+    """Read `member_name` out of an already-open ZIP, verify it's really a
+    supported image/video by its magic bytes (never trusting the member's
+    claimed extension), hash it, and write it (deduped, re-extensioned to
+    match the sniffed type) under `library_dir/media/...`. Returns `None`
+    if the member can't be read, or isn't a recognised media type, so one
+    bad/malicious media reference doesn't abort the whole import."""
     try:
         data = zf.read(member_name)
     except (KeyError, zipfile.BadZipFile, OSError):
         return None
-    ext = Path(member_name).suffix.lower()
-    return _write_deduped(data, ext, library_dir)
+    return _write_deduped(data, library_dir)
 
 
 def _hash_file(path: Path) -> str:

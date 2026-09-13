@@ -29,7 +29,7 @@ def dist_client(tmp_path: Path, tmp_config: Config, monkeypatch: pytest.MonkeyPa
 
     app = main_module.create_app(tmp_config)
     app.dependency_overrides[get_config_dependency] = lambda: tmp_config
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         yield client
 
 

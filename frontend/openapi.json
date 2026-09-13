@@ -640,6 +640,17 @@
         "title": "ChatSessionCreateRequest",
         "type": "object"
       },
+      "ConnectLocalRequest": {
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          }
+        },
+        "title": "ConnectLocalRequest",
+        "type": "object"
+      },
       "ConnectRequest": {
         "properties": {
           "cookies": {
@@ -4070,7 +4081,7 @@
     },
     "/api/import/upload": {
       "post": {
-        "description": "Upload an Instagram export ZIP and run the import.\n\nThe upload is saved under `<library_dir>/imports/` (never trusting\nthe client-supplied filename beyond its basename) before parsing\nstarts. Import runs synchronously for v1 \u2014 a saved-posts+media ZIP\nprocesses fast enough that a background queue isn't worth the extra\nmoving parts yet; A3 owns the (separately long-running) enrichment\nbackground queue.\n\nA ZIP that doesn't look like a real Instagram export doesn't raise an\nHTTP error here \u2014 it comes back as a normal `ImportJob` with\n`status=\"failed\"` and a friendly `error_message`, so the frontend can\nshow it inline rather than having to special-case a 4xx/5xx.",
+        "description": "Upload an Instagram export ZIP and run the import.\n\nThe upload is saved under `config.resolved_imports_dir` (never\ntrusting the client-supplied filename beyond its basename) \u2014 outside\n`library_dir`, since that's served at `/media` and a \"Download Your\nInformation\" export can contain far more than saved posts (audit\nfinding S8). Import runs synchronously for v1 \u2014 a saved-posts+media\nZIP processes fast enough that a background queue isn't worth the\nextra moving parts yet; A3 owns the (separately long-running)\nenrichment background queue.\n\nA ZIP that doesn't look like a real Instagram export doesn't raise an\nHTTP error here \u2014 it comes back as a normal `ImportJob` with\n`status=\"failed\"` and a friendly `error_message`, so the frontend can\nshow it inline rather than having to special-case a 4xx/5xx. The\nuploaded ZIP is deleted after a successful import; kept on failure so\nit can be inspected/retried.",
         "operationId": "upload_export_api_import_upload_post",
         "requestBody": {
           "content": {
@@ -5169,7 +5180,7 @@
     },
     "/api/models/tasks": {
       "put": {
-        "description": "Point an AI task at a provider/model. If `provider_kind` is given,\nalso (re)registers that provider. Persisted to secrets.yaml.",
+        "description": "Point an AI task at a provider/model. If `provider_kind` is given,\nalso (re)registers that provider. Persisted to secrets.yaml.\n\nIf this changes an existing provider's `base_url`, its stored API key\nis cleared and must be re-entered: otherwise the next call would send\nthat key to whatever host `base_url` now points at (audit finding\nS6 \u2014 a provider's key can be silently exfiltrated by re-pointing its\nbase_url to an attacker-controlled server).",
         "operationId": "set_task_routing_api_models_tasks_put",
         "requestBody": {
           "content": {
@@ -5330,6 +5341,18 @@
     "/api/pull/connect-local": {
       "post": {
         "operationId": "connect_local_api_pull_connect_local_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectLocalRequest",
+                "default": {
+                  "confirm": false
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -5340,6 +5363,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "Connect Local",

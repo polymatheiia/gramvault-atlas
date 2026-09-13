@@ -28,17 +28,73 @@ def serve(
     host: str | None = typer.Option(None, help="Override config.yaml server.host"),
     port: int | None = typer.Option(None, help="Override config.yaml server.port"),
     reload: bool = typer.Option(False, help="Enable uvicorn auto-reload (dev only)"),
+    insecure: bool = typer.Option(
+        False, "--insecure", help="Allow binding a non-loopback host with no auth token set"
+    ),
 ) -> None:
-    """Run the FastAPI server."""
+    """Run the FastAPI server.
+
+    On first run (no `auth.token` configured and `auth.disabled` not set),
+    generates a token, writes it to `secrets.yaml`, and prints it once —
+    loopback is not a security boundary for a browser-driven app (audit
+    finding S2). Binding a non-loopback host with no token refuses to
+    start unless `--insecure` is passed.
+    """
     import uvicorn
 
+    from gramvault.config import ensure_auth_token, get_config_path
+
     config = get_config()
+    effective_host = host or config.server.host
+
+    token = ensure_auth_token(get_config_path())
+    if token and not config.auth.token:
+        typer.echo(f"Generated an API token (also saved to secrets.yaml): {token}")
+        typer.echo("Paste it into the browser once when prompted.")
+        config = get_config()  # ensure_auth_token cleared the lru_cache
+
+    if effective_host not in ("127.0.0.1", "localhost", "::1") and not config.auth.token and not insecure:
+        typer.echo(
+            f"Refusing to bind {effective_host} with no auth token and auth not "
+            "explicitly disabled. Pass --insecure to bind anyway, or set "
+            "`auth.disabled: true` in config.yaml for a deliberately open deployment."
+        )
+        raise typer.Exit(code=2)
+
     uvicorn.run(
         "gramvault.main:app",
-        host=host or config.server.host,
+        host=effective_host,
         port=port or config.server.port,
         reload=reload,
     )
+
+
+@app.command(name="token")
+def token_command(
+    action: str = typer.Argument(..., help="show | rotate"),
+) -> None:
+    """Show or rotate the API auth token (see `serve`'s auto-bootstrap)."""
+    from gramvault.config import get_config_path, get_secrets_path, update_secrets
+
+    if action not in ("show", "rotate"):
+        typer.echo("action must be 'show' or 'rotate'")
+        raise typer.Exit(code=1)
+
+    config_path = get_config_path()
+    if action == "show":
+        config = get_config()
+        if not config.auth.token:
+            typer.echo("No token is configured. Run `gramvault serve` once to generate one.")
+            raise typer.Exit(code=1)
+        typer.echo(config.auth.token)
+        return
+
+    import secrets as _secrets
+
+    new_token = _secrets.token_urlsafe(32)
+    update_secrets({"auth": {"token": new_token}}, config_path)
+    typer.echo(f"New token (saved to {get_secrets_path()}): {new_token}")
+    typer.echo("Every client using the old token must be updated.")
 
 
 @app.command(name="reindex-search")

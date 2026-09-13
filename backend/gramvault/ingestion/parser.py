@@ -84,6 +84,20 @@ GENERIC_HTML_GLOBS = [
 
 _SHORTCODE_RE = re.compile(r"instagram\.com/(?:p|reel|reels|tv)/([A-Za-z0-9_\-]+)")
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+_INSTAGRAM_URL_RE = re.compile(r"^https://(www\.)?instagram\.com/", re.IGNORECASE)
+
+
+def _valid_instagram_url(href: str | None) -> str | None:
+    """Keep `href` only if it's really an `https://instagram.com/...` URL.
+
+    An export's `href`/`permalink` field is attacker-influenced data (a
+    crafted "Download Your Information" ZIP), and it's rendered as
+    `<a href>` in the frontend without further checks — a `javascript:`
+    or `data:` URL there would be an XSS vector (audit finding S10)."""
+    if href and _INSTAGRAM_URL_RE.match(href):
+        return href
+    return None
+
 
 _VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
 
@@ -333,7 +347,7 @@ def _parse_label_values_entry(entry: dict) -> SavedItem:
     return SavedItem(
         title=title or None,
         author_username=author_username,
-        instagram_url=href,
+        instagram_url=_valid_instagram_url(href),
         external_id=_derive_external_id(href),
         saved_at=saved_at,
         media_type_guess=_guess_media_type_from_url(href),
@@ -360,7 +374,7 @@ def _parse_string_list_entry(entry: dict) -> SavedItem:
     return SavedItem(
         title=title,
         author_username=_clean_username(title),
-        instagram_url=href,
+        instagram_url=_valid_instagram_url(href),
         external_id=_derive_external_id(href),
         saved_at=saved_at,
         media_type_guess=_guess_media_type_from_url(href),

@@ -52,6 +52,14 @@ class ConnectRequest(BaseModel):
     cookies: str = Field(min_length=1)
 
 
+class ConnectLocalRequest(BaseModel):
+    # Explicit opt-in required (audit finding S5): connect-local reads
+    # this box's Firefox cookie jar, which is sensitive even for a
+    # deliberate, authenticated caller — a bare POST with no body must
+    # not be enough to trigger it.
+    confirm: bool = False
+
+
 class PullRunRequest(BaseModel):
     # How many saved posts to walk back through before stopping. None -> the
     # configured default (`pull.max_default`).
@@ -134,8 +142,16 @@ def connect(
 
 
 @router.post("/connect-local", response_model=PullSessionResponse)
-def connect_local(config: Config = Depends(get_config_dependency)) -> PullSessionResponse:
+def connect_local(
+    body: ConnectLocalRequest = ConnectLocalRequest(),
+    config: Config = Depends(get_config_dependency),
+) -> PullSessionResponse:
     _require_enabled(config)
+    if not body.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Pass {\"confirm\": true} to read this box's Firefox cookie jar.",
+        )
     try:
         instagram.connect_from_local_browser(config)
     except instagram.InstagramDependencyError as exc:

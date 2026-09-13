@@ -43,9 +43,17 @@ export function setUnauthorizedHandler(fn: (() => void) | null): void {
   onUnauthorized = fn
 }
 
+// Forces a real CORS preflight on cross-origin requests (a custom header
+// isn't "simple"), which the backend's CORS policy then denies for any
+// origin not on its allowlist — see gramvault.api.csrf.CrossSiteGuard.
+const CLIENT_HEADER_NAME = 'X-GramVault-Client'
+
 function authHeaders(): Record<string, string> {
   const token = getAuthToken()
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  return {
+    [CLIENT_HEADER_NAME]: '1',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  }
 }
 
 export class ApiError extends Error {
@@ -138,6 +146,7 @@ export async function uploadFile<T>(
   return new Promise<T>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open('POST', buildUrl(path))
+    xhr.setRequestHeader(CLIENT_HEADER_NAME, '1')
     const token = getAuthToken()
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.upload.onprogress = (evt) => {
@@ -166,13 +175,7 @@ export async function uploadFile<T>(
  * Resolve a `MediaFile.file_path` (POSIX path relative to the configured
  * library dir, e.g. "media/ab/ab34...ef.jpg" — see
  * `backend/gramvault/ingestion/organizer.py`) into a URL an `<img>`/`<video>`
- * tag can load.
- *
- * GAP: as of this writing, `backend/gramvault/main.py` does not mount any
- * static route over `config.resolved_library_dir` — it only mounts
- * `frontend/dist` at `/`. This assumes a future `/media` static mount
- * (e.g. `app.mount("/media", StaticFiles(directory=str(config.resolved_library_dir)), name="media")`)
- * is added on the backend. Until that exists, URLs built here will 404.
+ * tag can load. Served by the `/media` mount in `backend/gramvault/main.py`.
  */
 export function mediaUrl(filePath: string): string {
   const encoded = filePath.split('/').map(encodeURIComponent).join('/')

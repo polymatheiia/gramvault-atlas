@@ -564,17 +564,21 @@ export interface paths {
          * Upload Export
          * @description Upload an Instagram export ZIP and run the import.
          *
-         *     The upload is saved under `<library_dir>/imports/` (never trusting
-         *     the client-supplied filename beyond its basename) before parsing
-         *     starts. Import runs synchronously for v1 — a saved-posts+media ZIP
-         *     processes fast enough that a background queue isn't worth the extra
-         *     moving parts yet; A3 owns the (separately long-running) enrichment
-         *     background queue.
+         *     The upload is saved under `config.resolved_imports_dir` (never
+         *     trusting the client-supplied filename beyond its basename) — outside
+         *     `library_dir`, since that's served at `/media` and a "Download Your
+         *     Information" export can contain far more than saved posts (audit
+         *     finding S8). Import runs synchronously for v1 — a saved-posts+media
+         *     ZIP processes fast enough that a background queue isn't worth the
+         *     extra moving parts yet; A3 owns the (separately long-running)
+         *     enrichment background queue.
          *
          *     A ZIP that doesn't look like a real Instagram export doesn't raise an
          *     HTTP error here — it comes back as a normal `ImportJob` with
          *     `status="failed"` and a friendly `error_message`, so the frontend can
-         *     show it inline rather than having to special-case a 4xx/5xx.
+         *     show it inline rather than having to special-case a 4xx/5xx. The
+         *     uploaded ZIP is deleted after a successful import; kept on failure so
+         *     it can be inspected/retried.
          */
         post: operations["upload_export_api_import_upload_post"];
         delete?: never;
@@ -936,6 +940,12 @@ export interface paths {
          * Set Task Routing
          * @description Point an AI task at a provider/model. If `provider_kind` is given,
          *     also (re)registers that provider. Persisted to secrets.yaml.
+         *
+         *     If this changes an existing provider's `base_url`, its stored API key
+         *     is cleared and must be re-entered: otherwise the next call would send
+         *     that key to whatever host `base_url` now points at (audit finding
+         *     S6 — a provider's key can be silently exfiltrated by re-pointing its
+         *     base_url to an attacker-controlled server).
          */
         put: operations["set_task_routing_api_models_tasks_put"];
         post?: never;
@@ -1262,6 +1272,14 @@ export interface components {
         ChatSessionCreateRequest: {
             /** Title */
             title?: string | null;
+        };
+        /** ConnectLocalRequest */
+        ConnectLocalRequest: {
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
         };
         /** ConnectRequest */
         ConnectRequest: {
@@ -3625,7 +3643,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConnectLocalRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3634,6 +3656,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PullSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

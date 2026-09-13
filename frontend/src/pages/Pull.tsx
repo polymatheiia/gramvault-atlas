@@ -143,7 +143,7 @@ export function Pull() {
         setCookies('')
         setShowPaste(false)
       } else {
-        await api.post<PullSession>('/api/pull/connect-local')
+        await api.post<PullSession>('/api/pull/connect-local', { confirm: true })
       }
       await refreshSession()
       setNotice('Connected.')

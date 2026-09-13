@@ -44,7 +44,9 @@ def export_config(tmp_path: Path, vault_dir: Path) -> Config:
 def export_client(export_config: Config) -> Iterator[TestClient]:
     app = create_app(export_config)
     app.dependency_overrides[get_config_dependency] = lambda: export_config
-    with TestClient(app) as test_client:
+    with TestClient(
+        app, base_url="http://127.0.0.1", headers={"X-GramVault-Client": "1"}
+    ) as test_client:
         yield test_client
 
 
@@ -77,7 +79,9 @@ class TestStartExportValidation:
         )
         app = create_app(config)
         app.dependency_overrides[get_config_dependency] = lambda: config
-        with TestClient(app) as client:
+        with TestClient(
+            app, base_url="http://127.0.0.1", headers={"X-GramVault-Client": "1"}
+        ) as client:
             response = client.post("/api/export/obsidian", json={})
         assert response.status_code == 400
 
@@ -95,7 +99,9 @@ class TestStartExportValidation:
         )
         app = create_app(config)
         app.dependency_overrides[get_config_dependency] = lambda: config
-        with TestClient(app) as client:
+        with TestClient(
+            app, base_url="http://127.0.0.1", headers={"X-GramVault-Client": "1"}
+        ) as client:
             response = client.post("/api/export/obsidian", json={})
         assert response.status_code == 400
         assert "does not exist" in response.json()["detail"]
@@ -256,7 +262,9 @@ def export_client_with_config_file(
     app = create_app(export_config)
     app.dependency_overrides[get_config_dependency] = lambda: export_config
     app.dependency_overrides[get_config_path_dependency] = lambda: config_yaml_file
-    with TestClient(app) as test_client:
+    with TestClient(
+        app, base_url="http://127.0.0.1", headers={"X-GramVault-Client": "1"}
+    ) as test_client:
         yield test_client
 
 

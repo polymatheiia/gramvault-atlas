@@ -39,20 +39,24 @@ async def upload_export(
 ) -> ImportJob:
     """Upload an Instagram export ZIP and run the import.
 
-    The upload is saved under `<library_dir>/imports/` (never trusting
-    the client-supplied filename beyond its basename) before parsing
-    starts. Import runs synchronously for v1 — a saved-posts+media ZIP
-    processes fast enough that a background queue isn't worth the extra
-    moving parts yet; A3 owns the (separately long-running) enrichment
-    background queue.
+    The upload is saved under `config.resolved_imports_dir` (never
+    trusting the client-supplied filename beyond its basename) — outside
+    `library_dir`, since that's served at `/media` and a "Download Your
+    Information" export can contain far more than saved posts (audit
+    finding S8). Import runs synchronously for v1 — a saved-posts+media
+    ZIP processes fast enough that a background queue isn't worth the
+    extra moving parts yet; A3 owns the (separately long-running)
+    enrichment background queue.
 
     A ZIP that doesn't look like a real Instagram export doesn't raise an
     HTTP error here — it comes back as a normal `ImportJob` with
     `status="failed"` and a friendly `error_message`, so the frontend can
-    show it inline rather than having to special-case a 4xx/5xx.
+    show it inline rather than having to special-case a 4xx/5xx. The
+    uploaded ZIP is deleted after a successful import; kept on failure so
+    it can be inspected/retried.
     """
     safe_name = Path(file.filename or "export.zip").name or "export.zip"
-    imports_dir = config.resolved_library_dir / "imports"
+    imports_dir = config.resolved_imports_dir
     imports_dir.mkdir(parents=True, exist_ok=True)
     dest = imports_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
 
@@ -66,6 +70,8 @@ async def upload_export(
         job = importer.run_import(job.id, dest, config)
     except Exception as exc:  # pragma: no cover - defensive catch-all
         job = importer.fail_job(job.id, f"Unexpected error during import: {exc}", config)
+    if job.status == JobStatus.DONE:
+        dest.unlink(missing_ok=True)
     return job
 
 

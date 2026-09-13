@@ -61,7 +61,9 @@ def _client(config: Config) -> Iterator[TestClient]:
     conn.close()
     app = create_app(config)
     app.dependency_overrides[get_config_dependency] = lambda: config
-    with TestClient(app) as c:
+    with TestClient(
+        app, base_url="http://127.0.0.1", headers={"X-GramVault-Client": "1"}
+    ) as c:
         yield c
 
 
@@ -114,6 +116,18 @@ def test_run_refused_when_not_connected(enabled_client: TestClient):
 
 
 # --- connect ---------------------------------------------------------
+
+
+def test_connect_local_without_confirm_is_rejected(enabled_client: TestClient):
+    # Regression for audit finding S5: a bare POST (no body, or
+    # confirm=false) must not be enough to trigger reading this box's
+    # Firefox cookie jar.
+    r = enabled_client.post("/api/pull/connect-local")
+    assert r.status_code == 400
+    assert "confirm" in r.json()["detail"].lower()
+
+    r2 = enabled_client.post("/api/pull/connect-local", json={"confirm": False})
+    assert r2.status_code == 400
 
 
 def test_connect_with_valid_cookies(enabled_client: TestClient):

@@ -38,7 +38,7 @@ def token_client(tmp_path, monkeypatch) -> Iterator[TestClient]:
     )
     app = create_app(tmp_cfg)
     app.dependency_overrides[get_config_dependency] = lambda: tmp_cfg
-    with TestClient(app) as client:
+    with TestClient(app, base_url="http://127.0.0.1") as client:
         yield client
 
 
@@ -49,7 +49,15 @@ def test_health_is_open_without_a_token(token_client: TestClient) -> None:
 def test_protected_endpoint_needs_the_token(token_client: TestClient) -> None:
     assert token_client.get("/api/library/categories").status_code == 401
     assert token_client.get("/api/jobs").status_code == 401
-    assert token_client.get("/media/anything.jpg").status_code == 401
+
+
+def test_media_is_not_bearer_gated(token_client: TestClient) -> None:
+    # /media is loaded via plain <img src>/<video src>, which can never
+    # carry an Authorization header — bearer auth deliberately does not
+    # cover it (see auth.py's docstring); its defense is CrossSiteGuard
+    # instead (test_main_prod_hardening.py). A 404 here (no such file, no
+    # frontend/dist in this fixture) — not 401 — proves that.
+    assert token_client.get("/media/anything.jpg").status_code == 404
 
 
 def test_docs_and_openapi_need_the_token(token_client: TestClient) -> None:

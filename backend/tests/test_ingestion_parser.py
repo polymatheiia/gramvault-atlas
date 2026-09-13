@@ -395,3 +395,48 @@ def test_parse_export_handles_both_shapes_in_one_file(tmp_path: Path) -> None:
     assert parsed.saved_items[0].author_username == "traveler_bob"
     assert parsed.saved_items[0].caption is None
     assert parsed.saved_items[1].caption == "new"
+
+
+@pytest.mark.parametrize(
+    "href",
+    [
+        "javascript:alert(document.cookie)",
+        "data:text/html,<script>alert(1)</script>",
+        "https://evil.example/phishing",
+        "http://instagram.com.evil.example/p/ABC/",  # lookalike host, not instagram.com
+    ],
+)
+def test_non_instagram_href_is_dropped_not_stored(tmp_path: Path, href: str) -> None:
+    # Regression for audit finding S10: `href` is attacker-influenced
+    # export data rendered as `<a href>` with no further validation in the
+    # frontend, so only a real instagram.com URL may survive parsing.
+    entries = [{"title": "someone", "string_list_data": [{"href": href, "timestamp": 1700000000}]}]
+    zip_path = _write_zip(
+        tmp_path,
+        "export.zip",
+        {"your_instagram_activity/saved/saved_posts.json": _saved_posts_json(entries)},
+    )
+
+    parsed = parse_export(zip_path)
+
+    assert parsed.saved_items[0].instagram_url is None
+
+
+def test_real_instagram_url_is_kept(tmp_path: Path) -> None:
+    entries = [
+        {
+            "title": "someone",
+            "string_list_data": [
+                {"href": "https://www.instagram.com/p/ABC123abc/", "timestamp": 1700000000}
+            ],
+        }
+    ]
+    zip_path = _write_zip(
+        tmp_path,
+        "export.zip",
+        {"your_instagram_activity/saved/saved_posts.json": _saved_posts_json(entries)},
+    )
+
+    parsed = parse_export(zip_path)
+
+    assert parsed.saved_items[0].instagram_url == "https://www.instagram.com/p/ABC123abc/"

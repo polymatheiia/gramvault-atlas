@@ -56,8 +56,10 @@ def _write_own_posts_export(tmp_path: Path, name: str = "own_export.zip") -> Pat
     zip_path = tmp_path / name
     with zipfile.ZipFile(zip_path, "w") as zf:
         zf.writestr("your_instagram_activity/media/posts_1.json", posts_json)
-        zf.writestr("media/posts/202301/a.jpg", b"fake jpeg bytes AAAA")
-        zf.writestr("media/posts/202301/b.jpg", b"fake jpeg bytes BBBB")
+        # Real JPEG magic bytes (organizer.sniff_extension gates on content,
+        # not the claimed .jpg extension — see audit finding S3).
+        zf.writestr("media/posts/202301/a.jpg", b"\xff\xd8\xff\xe0fake jpeg bytes AAAA")
+        zf.writestr("media/posts/202301/b.jpg", b"\xff\xd8\xff\xe0fake jpeg bytes BBBB")
     return zip_path
 
 

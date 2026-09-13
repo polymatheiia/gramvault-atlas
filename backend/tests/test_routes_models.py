@@ -36,7 +36,9 @@ def models_client(tmp_path: Path) -> Iterator[tuple[TestClient, Path]]:
     # `get_config_dependency` re-reads from disk so it reflects writes.
     app.dependency_overrides[get_config_dependency] = lambda: load_config(config_yaml)
     app.dependency_overrides[get_config_path_dependency] = lambda: config_yaml
-    with TestClient(app) as client:
+    with TestClient(
+        app, base_url="http://127.0.0.1", headers={"X-GramVault-Client": "1"}
+    ) as client:
         yield client, tmp_path
 
 
@@ -90,6 +92,52 @@ class TestTaskRouting:
         written = yaml.safe_load((tmp_path / "secrets.yaml").read_text())
         assert written["ai"]["chat"] == {"provider": "anthropic", "model": "claude-sonnet-5"}
         assert written["providers"]["anthropic"]["kind"] == "anthropic"
+
+    def test_changing_base_url_clears_the_stored_key(self, models_client) -> None:
+        # Regression for audit finding S6: re-pointing a provider's
+        # base_url must clear its stored key, or the next call sends that
+        # key to whatever host base_url now names.
+        client, tmp_path = models_client
+        with patch(
+            "gramvault.api.routes_models.list_ollama_models", new_callable=AsyncMock, return_value=[]
+        ):
+            client.put(
+                "/api/models/tasks",
+                json={
+                    "task": "chat",
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "provider_kind": "anthropic",
+                },
+            )
+            client.put(
+                "/api/models/secrets", json={"provider": "anthropic", "api_key": "sk-secret"}
+            )
+            overview_before = client.get("/api/models").json()
+            provider_before = next(
+                p for p in overview_before["providers"] if p["name"] == "anthropic"
+            )
+            assert provider_before["api_key_set"] is True
+
+            resp = client.put(
+                "/api/models/tasks",
+                json={
+                    "task": "chat",
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-5",
+                    "provider_kind": "anthropic",
+                    "base_url": "https://attacker.example",
+                },
+            )
+        assert resp.status_code == 200
+        provider_after = next(
+            p for p in resp.json()["providers"] if p["name"] == "anthropic"
+        )
+        assert provider_after["api_key_set"] is False
+        assert provider_after["base_url"] == "https://attacker.example"
+
+        written = yaml.safe_load((tmp_path / "secrets.yaml").read_text())
+        assert "api_key" not in written["providers"]["anthropic"]
 
     def test_changing_embedding_model_flags_needs_reembed(self, models_client) -> None:
         client, _ = models_client

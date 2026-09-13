@@ -88,6 +88,10 @@ class VideoConfig(BaseModel):
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
+    # Extra Host header values to accept, beyond localhost/127.0.0.1/[::1]
+    # and `host` itself — e.g. a Tailscale MagicDNS name. See
+    # `TrustedHostMiddleware` in main.py (audit finding S2).
+    allowed_hosts: list[str] = Field(default_factory=list)
 
 
 class PullConfig(BaseModel):
@@ -171,6 +175,10 @@ class AuthConfig(BaseModel):
     only safe on a loopback / trusted-tailnet bind."""
 
     token: str | None = None
+    # Explicit opt-out of the auto-generated-token bootstrap (see
+    # `gramvault.cli.serve` / `ensure_auth_token`) for a deliberately
+    # open deployment. Logged loudly at startup — see audit finding S2.
+    disabled: bool = False
 
 
 class Config(BaseModel):
@@ -203,6 +211,16 @@ class Config(BaseModel):
     @property
     def resolved_pull_session_dir(self) -> Path:
         return Path(self.pull.session_dir).expanduser().resolve()
+
+    @property
+    def resolved_imports_dir(self) -> Path:
+        """Where uploaded export ZIPs are staged during import.
+
+        Deliberately outside `resolved_library_dir` (audit finding S8):
+        `library_dir` is served at `/media`, and a "Download Your
+        Information" export can contain far more than saved posts.
+        """
+        return self.resolved_db_path.parent / "imports"
 
     @property
     def resolved_obsidian_vault_dir(self) -> Path | None:
@@ -426,6 +444,21 @@ def update_secrets(patch: dict[str, Any], config_path: Path) -> Config:
 
     get_config.cache_clear()
     return load_config(config_path)
+
+
+def ensure_auth_token(config_path: Path) -> str:
+    """Return the configured auth token, generating and persisting one on
+    first run if none is set and auth isn't explicitly disabled (audit
+    finding S2: auth off by default is exploitable from any web page via
+    CSRF/DNS rebinding). Returns "" when `auth.disabled` is true."""
+    cfg = load_config(config_path)
+    if cfg.auth.token or cfg.auth.disabled:
+        return cfg.auth.token or ""
+    import secrets as _secrets
+
+    token = _secrets.token_urlsafe(32)
+    update_secrets({"auth": {"token": token}}, config_path)
+    return token
 
 
 def save_obsidian_vault_dir(vault_dir: str | None, config_path: Path) -> Config:

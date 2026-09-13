@@ -1,14 +1,23 @@
 """Optional bearer-token auth for the API.
 
 When `config.auth.token` is set (via `secrets.yaml` / the Models settings
-page), every `/api/*`, `/media/*`, `/docs`, `/redoc` and `/openapi.json`
-request must carry `Authorization: Bearer <token>`. `/api/health` stays
-open so a monitor can poll it. The SPA shell (`/`) and its built assets
+page), every `/api/*`, `/docs`, `/redoc` and `/openapi.json` request must
+carry `Authorization: Bearer <token>`. `/api/health` stays open so a
+monitor can poll it. The SPA shell (`/`) and its built assets
 (`/assets/*`) are intentionally left open since the browser can't attach
 an Authorization header to a plain navigation — the frontend's AuthGate
 prompts for the token before it calls the API. When no token is
 configured the middleware is a no-op — which is only safe on a loopback
 or trusted-tailnet bind.
+
+`/media/*` is deliberately NOT gated here: it's loaded via plain
+`<img src>`/`<video src>`, which can never carry an Authorization header,
+so bearer auth can't protect it without breaking every thumbnail in the
+app. Its defense is structural instead — `CrossSiteGuard` (see
+`gramvault.api.csrf`) rejects a cross-site subresource load the same way
+it rejects a cross-site API call (a cross-site `<img>` load still sends
+`Sec-Fetch-Site: cross-site`), and `organizer.py`'s media allowlist means
+nothing served there can execute as a document anyway (S3).
 
 The token is read from `get_config()` on each request, so setting or
 clearing it through the API takes effect without a restart.
@@ -25,7 +34,7 @@ from starlette.types import ASGIApp
 from gramvault.config import get_config
 
 _OPEN_PATHS = frozenset({"/api/health"})
-_PROTECTED_PREFIXES = ("/api/", "/media/", "/docs", "/redoc", "/openapi.json")
+_PROTECTED_PREFIXES = ("/api/", "/docs", "/redoc", "/openapi.json")
 
 
 def _is_protected(path: str) -> bool:

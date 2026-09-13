@@ -277,15 +277,23 @@ async def set_task_routing(
     config_path: Path = Depends(get_config_path_dependency),
 ) -> TaskRoutingUpdateResponse:
     """Point an AI task at a provider/model. If `provider_kind` is given,
-    also (re)registers that provider. Persisted to secrets.yaml."""
+    also (re)registers that provider. Persisted to secrets.yaml.
+
+    If this changes an existing provider's `base_url`, its stored API key
+    is cleared and must be re-entered: otherwise the next call would send
+    that key to whatever host `base_url` now points at (audit finding
+    S6 — a provider's key can be silently exfiltrated by re-pointing its
+    base_url to an attacker-controlled server).
+    """
     before_pc, before_model = config.resolve_task(body.task)
 
     patch: dict = {"ai": {body.task: {"provider": body.provider, "model": body.model}}}
     if body.provider_kind is not None:
-        patch.setdefault("providers", {})[body.provider] = {
-            "kind": body.provider_kind,
-            "base_url": body.base_url,
-        }
+        existing = config.providers.get(body.provider)
+        provider_patch: dict = {"kind": body.provider_kind, "base_url": body.base_url}
+        if existing is not None and existing.api_key and existing.base_url != body.base_url:
+            provider_patch["api_key"] = None  # update_secrets treats None as "delete"
+        patch.setdefault("providers", {})[body.provider] = provider_patch
     new_config = update_secrets(patch, config_path)
 
     after_pc, after_model = new_config.resolve_task(body.task)

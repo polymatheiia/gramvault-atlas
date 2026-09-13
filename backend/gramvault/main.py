@@ -10,6 +10,7 @@ Run via `gramvault serve` (see `gramvault.cli`) or directly with uvicorn:
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,6 +19,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from gramvault.api import (
     auth,
@@ -33,13 +35,20 @@ from gramvault.api import (
     routes_models,
     routes_pull,
 )
+from gramvault.api.csrf import CrossSiteGuard
+from gramvault.api.headers import SafeMedia, SecurityHeadersMiddleware
 from gramvault.config import Config, get_config
 from gramvault.db.session import get_connection, init_db
 
 logger = logging.getLogger(__name__)
 
-# Vite's default dev server origin — allowed for local frontend development.
-# TODO(A5): adjust/remove once the real frontend dev workflow is settled.
+# Set GRAMVAULT_DEV=1 to run against the Vite dev server (`npm run dev`)
+# instead of a production build: relaxes CORS to the dev origin below and
+# re-enables /docs, /redoc, /openapi.json (audit findings S11, S12).
+_DEV_MODE = os.environ.get("GRAMVAULT_DEV") == "1"
+
+# Vite's default dev server origin — allowed for local frontend development
+# only, see `_DEV_MODE` above.
 _DEV_FRONTEND_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -96,16 +105,38 @@ def create_app(config: Config | None = None) -> FastAPI:
         description="Private, local-first pipeline for saved Instagram content.",
         version="0.2.0",
         lifespan=lifespan,
+        # Swagger UI / ReDoc / the raw schema are pointless in prod and
+        # unauthenticated (they live outside /api/*) — dev-only (S11).
+        docs_url="/docs" if _DEV_MODE else None,
+        redoc_url="/redoc" if _DEV_MODE else None,
+        openapi_url="/openapi.json" if _DEV_MODE else None,
     )
 
+    # Host header allowlist — closes DNS rebinding (a page on an attacker
+    # domain re-pointed at 127.0.0.1 becomes "same-origin" from the
+    # browser's point of view once the Host check is gone). Outermost
+    # middleware: a bad Host is rejected before anything else runs.
+    _hosts = {"localhost", "127.0.0.1", "[::1]", config.server.host, *config.server.allowed_hosts}
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=[h for h in _hosts if h and h != "0.0.0.0"]
+    )
+    app.add_middleware(SecurityHeadersMiddleware)
+    # Structural CSRF defense: rejects cross-site /api/* requests before
+    # they reach a route, independent of whether a token is configured
+    # (audit finding S2 — auth is off by default, and loopback is not a
+    # security boundary for a browser-driven app).
+    app.add_middleware(
+        CrossSiteGuard,
+        allowed_origins=frozenset(_DEV_FRONTEND_ORIGINS) if _DEV_MODE else frozenset(),
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=_DEV_FRONTEND_ORIGINS,
+        allow_origins=_DEV_FRONTEND_ORIGINS if _DEV_MODE else [],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    # Bearer-token gate on /api/* + /media/* — a no-op unless
+    # Bearer-token gate on /api/* + /media/* + /docs/* — a no-op unless
     # `config.auth.token` is set (see gramvault.api.auth). Added
     # unconditionally so setting the token via the API needs no restart.
     app.add_middleware(auth.BearerAuthMiddleware)
@@ -134,7 +165,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     # been imported into yet, so this mount never fails at startup.
     library_dir = config.resolved_library_dir
     library_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/media", StaticFiles(directory=str(library_dir)), name="media")
+    app.mount("/media", SafeMedia(directory=str(library_dir)), name="media")
 
     # --- serve the built frontend in production, if present ---
     # Expects a Vite production build at frontend/dist/ with an index.html
