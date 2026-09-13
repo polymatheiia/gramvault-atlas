@@ -56,7 +56,7 @@ export async function fetchSiblingIds(
   if (search) {
     const res = await api.get<SemanticSearchResponse>(
       '/api/chat/search',
-      { q: search, top_k: 120 },
+      { q: search, top_k: 100 },
       signal,
     )
     const category = params.get('category') ?? ''

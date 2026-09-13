@@ -1,10 +1,14 @@
 """Optional bearer-token auth for the API.
 
 When `config.auth.token` is set (via `secrets.yaml` / the Models settings
-page), every `/api/*` and `/media/*` request must carry
-`Authorization: Bearer <token>`. `/api/health` stays open so a monitor can
-poll it. When no token is configured the middleware is a no-op — which is
-only safe on a loopback or trusted-tailnet bind.
+page), every `/api/*`, `/media/*`, `/docs`, `/redoc` and `/openapi.json`
+request must carry `Authorization: Bearer <token>`. `/api/health` stays
+open so a monitor can poll it. The SPA shell (`/`) and its built assets
+(`/assets/*`) are intentionally left open since the browser can't attach
+an Authorization header to a plain navigation — the frontend's AuthGate
+prompts for the token before it calls the API. When no token is
+configured the middleware is a no-op — which is only safe on a loopback
+or trusted-tailnet bind.
 
 The token is read from `get_config()` on each request, so setting or
 clearing it through the API takes effect without a restart.
@@ -21,12 +25,13 @@ from starlette.types import ASGIApp
 from gramvault.config import get_config
 
 _OPEN_PATHS = frozenset({"/api/health"})
+_PROTECTED_PREFIXES = ("/api/", "/media/", "/docs", "/redoc", "/openapi.json")
 
 
 def _is_protected(path: str) -> bool:
     if path in _OPEN_PATHS:
         return False
-    return path.startswith("/api/") or path.startswith("/media/")
+    return path.startswith(_PROTECTED_PREFIXES)
 
 
 class BearerAuthMiddleware:

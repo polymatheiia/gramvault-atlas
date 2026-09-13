@@ -33,7 +33,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from gramvault.config import Config
 from gramvault.export.index_builder import IndexEntry, build_index_markdown
@@ -75,6 +75,34 @@ class VaultPathNotFoundError(Exception):
     """The configured vault base directory doesn't exist / isn't a directory."""
 
 
+class InvalidSubfolderError(Exception):
+    """`vault_subfolder` (or `default_vault_subfolder`) isn't a plain relative
+    folder path -- e.g. it tries to escape the vault with `..` or an
+    absolute/drive-letter path."""
+
+
+_SUBFOLDER_SEGMENT_RE = re.compile(r'^[^<>:"/\\|?*\x00-\x1f]{1,60}$')
+
+
+def validate_subfolder(value: str) -> str:
+    """Reject anything that isn't a plain relative folder path made of
+    ordinary segments, so `resolve_export_target` can never be pointed
+    outside the vault (`..`, a leading `/`, a drive letter like `C:\\`) or
+    at the vault root itself (`.`/empty)."""
+    normalized = value.replace("\\", "/")
+    parts = PurePosixPath(normalized).parts
+    if (
+        not parts
+        or parts[0] in ("/", "")
+        or any(p in (".", "..") or not _SUBFOLDER_SEGMENT_RE.match(p) for p in parts)
+    ):
+        raise InvalidSubfolderError(
+            f"vault_subfolder must be a relative folder name like 'GramVault' "
+            f"or 'Notes/GramVault': {value!r}"
+        )
+    return "/".join(parts)
+
+
 @dataclass
 class SkippedItem:
     item_id: int | None
@@ -96,7 +124,8 @@ class ExportResult:
 def resolve_export_target(config: Config, vault_subfolder: str | None) -> Path:
     """Validate the configured vault path and return the (created) target
     subfolder within it. Raises `VaultNotConfiguredError` /
-    `VaultPathNotFoundError` per the module docstring."""
+    `VaultPathNotFoundError` / `InvalidSubfolderError` per the module
+    docstring."""
     vault_dir = config.resolved_obsidian_vault_dir
     if vault_dir is None:
         raise VaultNotConfiguredError(
@@ -105,8 +134,11 @@ def resolve_export_target(config: Config, vault_subfolder: str | None) -> Path:
     if not vault_dir.is_dir():
         raise VaultPathNotFoundError(f"Configured Obsidian vault folder does not exist: {vault_dir}")
 
-    subfolder = vault_subfolder or config.export.default_vault_subfolder
-    target_dir = vault_dir / subfolder
+    subfolder = validate_subfolder(vault_subfolder or config.export.default_vault_subfolder)
+    resolved_vault_dir = vault_dir.resolve()
+    target_dir = (resolved_vault_dir / subfolder).resolve()
+    if not target_dir.is_relative_to(resolved_vault_dir):
+        raise InvalidSubfolderError(f"vault_subfolder escapes the configured vault: {vault_subfolder!r}")
     target_dir.mkdir(parents=True, exist_ok=True)
     return target_dir
 
@@ -408,10 +440,12 @@ __all__ = [
     "DIGESTS_SUBDIR_NAME",
     "MEDIA_SUBDIR_NAME",
     "ExportResult",
+    "InvalidSubfolderError",
     "SkippedItem",
     "VaultNotConfiguredError",
     "VaultPathNotFoundError",
     "export_digest",
     "export_items",
     "resolve_export_target",
+    "validate_subfolder",
 ]

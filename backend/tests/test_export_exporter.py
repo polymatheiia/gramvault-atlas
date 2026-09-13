@@ -9,9 +9,12 @@ import pytest
 
 from gramvault.config import Config, ExportConfig, PathsConfig
 from gramvault.export.exporter import (
+    InvalidSubfolderError,
     VaultNotConfiguredError,
     VaultPathNotFoundError,
     export_items,
+    resolve_export_target,
+    validate_subfolder,
 )
 from gramvault.export.markdown_builder import extract_gramvault_id, note_filename
 from gramvault.models.schemas import Author, FileMediaType, Item, MediaFile, MediaType
@@ -57,6 +60,40 @@ class TestVaultValidation:
         with pytest.raises(VaultPathNotFoundError) as exc_info:
             export_items(config, [_item()])
         assert str(missing_vault) in str(exc_info.value)
+
+
+class TestVaultSubfolderValidation:
+    """Regression tests for audit finding S4: `vault_subfolder` must never
+    let an export write or delete outside the configured vault."""
+
+    @pytest.mark.parametrize(
+        "value",
+        ["../x", "/tmp/x", "/abs", "C:\\x", ".", "", "a/../../b", "sub/../..", ".."],
+    )
+    def test_rejects_escaping_or_empty_values(self, value: str) -> None:
+        with pytest.raises(InvalidSubfolderError):
+            validate_subfolder(value)
+
+    @pytest.mark.parametrize("value", ["GramVault", "Notes/GramVault", "a/b/c"])
+    def test_accepts_plain_relative_paths(self, value: str) -> None:
+        assert validate_subfolder(value) == value
+
+    def test_resolve_export_target_rejects_traversal(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+        with pytest.raises(InvalidSubfolderError):
+            resolve_export_target(config, "../../etc")
+        # Nothing should have been created outside the vault.
+        assert not (tmp_path / "etc").exists()
+
+    def test_resolve_export_target_accepts_nested_subfolder(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+        target = resolve_export_target(config, "Notes/GramVault")
+        assert target == (vault_dir / "Notes" / "GramVault").resolve()
+        assert target.is_dir()
 
     def test_creates_target_subfolder_if_missing(self, tmp_path: Path) -> None:
         vault_dir = tmp_path / "vault"

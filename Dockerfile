@@ -45,7 +45,8 @@ COPY --from=frontend /frontend/dist ./frontend/dist
 # data paths are set in docker-compose.yml (matched to its bind mounts).
 # HF_HOME keeps the downloaded faster-whisper model on the /data volume.
 ENV GRAMVAULT_CONFIG_PATH=/app/config.yaml \
-    HF_HOME=/data/hf
+    HF_HOME=/data/hf \
+    ANONYMIZED_TELEMETRY=False
 
 # Non-root by default. docker-compose.yml overrides this with `user:` so the
 # process matches the host uid that owns the bind-mounted data/ and vault.

@@ -100,6 +100,26 @@ class TestStartExportValidation:
         assert response.status_code == 400
         assert "does not exist" in response.json()["detail"]
 
+    @pytest.mark.parametrize(
+        "value", ["../escape", "/tmp/x", "C:\\x", ".", "", "sub/../../etc"]
+    )
+    def test_escaping_vault_subfolder_returns_422(
+        self, export_client: TestClient, value: str
+    ) -> None:
+        response = export_client.post(
+            "/api/export/obsidian", json={"vault_subfolder": value}
+        )
+        assert response.status_code == 422
+
+    def test_nested_vault_subfolder_is_accepted(
+        self, export_client: TestClient, vault_dir: Path
+    ) -> None:
+        response = export_client.post(
+            "/api/export/obsidian", json={"vault_subfolder": "Notes/GramVault"}
+        )
+        assert response.status_code == 202
+        assert (vault_dir / "Notes" / "GramVault").is_dir()
+
 
 class TestExportEndToEnd:
     def test_export_whole_library_writes_note(

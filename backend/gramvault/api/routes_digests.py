@@ -32,6 +32,7 @@ from gramvault.chat.retrieval import fetch_items
 from gramvault.config import Config
 from gramvault.db.session import session_scope
 from gramvault.export.exporter import (
+    InvalidSubfolderError,
     VaultNotConfiguredError,
     VaultPathNotFoundError,
     export_digest,
@@ -287,7 +288,7 @@ async def export_digest_to_vault(
             template=digest.template,
             model=digest.model,
         )
-    except (VaultNotConfiguredError, VaultPathNotFoundError) as exc:
+    except (VaultNotConfiguredError, VaultPathNotFoundError, InvalidSubfolderError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return DigestExportResponse(path=str(path))
 

@@ -35,9 +35,11 @@ from gramvault.config import Config, save_export_settings, save_obsidian_vault_d
 from gramvault.db.session import session_scope
 from gramvault.export.exporter import (
     ExportResult,
+    InvalidSubfolderError,
     VaultNotConfiguredError,
     VaultPathNotFoundError,
     export_items,
+    validate_subfolder,
 )
 from gramvault.export.repository import load_items, load_latest_category_digests
 from gramvault.models.schemas import JobStatus
@@ -131,7 +133,7 @@ def _run_export_job(
             # that simply weren't in the subset.
             prune_stale_mocs=item_ids is None,
         )
-    except (VaultNotConfiguredError, VaultPathNotFoundError) as exc:
+    except (VaultNotConfiguredError, VaultPathNotFoundError, InvalidSubfolderError) as exc:
         error_message = str(exc)
     except Exception as exc:  # defensive: a job must never stay "running" forever
         error_message = f"Unexpected error during export: {exc}"
@@ -201,6 +203,11 @@ async def start_export(
             status_code=400,
             detail=f"Configured Obsidian vault folder does not exist: {vault_dir}",
         )
+    if body.vault_subfolder is not None:
+        try:
+            validate_subfolder(body.vault_subfolder)
+        except InvalidSubfolderError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     with session_scope(config) as conn:
         cursor = conn.execute(

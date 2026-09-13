@@ -146,18 +146,25 @@ def create_app(config: Config | None = None) -> FastAPI:
     # static files, and every other non-API/non-media path falls back to
     # index.html, letting react-router handle routing client-side.
     if _FRONTEND_DIST_DIR.is_dir():
-        assets_dir = _FRONTEND_DIST_DIR / "assets"
+        dist = _FRONTEND_DIST_DIR.resolve()
+        assets_dir = dist / "assets"
         if assets_dir.is_dir():
             app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="frontend-assets")
 
-        index_path = _FRONTEND_DIST_DIR / "index.html"
+        index_path = dist / "index.html"
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def spa_fallback(full_path: str) -> FileResponse:
             if full_path.startswith(("api/", "media/")):
                 raise HTTPException(status_code=404, detail="Not Found")
-            candidate = _FRONTEND_DIST_DIR / full_path
-            if full_path and candidate.is_file():
+            try:
+                candidate = (dist / full_path).resolve()
+            except (OSError, RuntimeError):
+                return FileResponse(index_path)
+            # Only serve files that really resolve inside frontend/dist
+            # (blocks `..`/absolute segments and symlink escapes) — anything
+            # else falls back to the SPA shell, same as an unknown route.
+            if full_path and candidate.is_relative_to(dist) and candidate.is_file():
                 return FileResponse(candidate)
             return FileResponse(index_path)
 

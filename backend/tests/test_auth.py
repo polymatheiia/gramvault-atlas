@@ -52,6 +52,20 @@ def test_protected_endpoint_needs_the_token(token_client: TestClient) -> None:
     assert token_client.get("/media/anything.jpg").status_code == 401
 
 
+def test_docs_and_openapi_need_the_token(token_client: TestClient) -> None:
+    assert token_client.get("/docs").status_code == 401
+    assert token_client.get("/redoc").status_code == 401
+    assert token_client.get("/openapi.json").status_code == 401
+
+
+def test_spa_shell_stays_open_without_a_token(token_client: TestClient) -> None:
+    # `/` must never be 401'd by the auth gate -- the browser can't attach
+    # an Authorization header to a plain navigation, see auth.py's
+    # docstring. If frontend/dist isn't built the SPA fallback route isn't
+    # registered and this 404s instead, which is equally "not 401".
+    assert token_client.get("/").status_code in (200, 404)
+
+
 def test_correct_bearer_token_is_accepted(token_client: TestClient) -> None:
     r = token_client.get("/api/library/categories", headers={"Authorization": "Bearer sekret"})
     assert r.status_code == 200

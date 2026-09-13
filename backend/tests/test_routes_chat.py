@@ -173,3 +173,20 @@ class TestSemanticSearch:
         mock_search.assert_awaited_once()
         _, kwargs = mock_search.call_args
         assert kwargs.get("top_k") == 5 or mock_search.call_args.args
+
+    def test_top_k_at_the_cap_succeeds(self, client: TestClient) -> None:
+        # Regression for audit finding R1: the frontend's fetchSiblingIds
+        # must request a top_k this endpoint actually accepts (le=100) --
+        # it used to send 120 and get a 422, breaking the Feed and
+        # prev/next nav under an active search.
+        with patch(
+            "gramvault.api.routes_chat.service.semantic_search",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            response = client.get("/api/chat/search", params={"q": "anything", "top_k": 100})
+        assert response.status_code == 200
+
+    def test_top_k_above_the_cap_is_422(self, client: TestClient) -> None:
+        response = client.get("/api/chat/search", params={"q": "anything", "top_k": 120})
+        assert response.status_code == 422

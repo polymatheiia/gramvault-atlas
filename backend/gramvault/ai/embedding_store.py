@@ -45,7 +45,10 @@ class QueryResult:
 
 def _client(config: Config) -> chromadb.ClientAPI:
     config.resolved_chroma_dir.mkdir(parents=True, exist_ok=True)
-    return chromadb.PersistentClient(path=str(config.resolved_chroma_dir))
+    return chromadb.PersistentClient(
+        path=str(config.resolved_chroma_dir),
+        settings=chromadb.Settings(anonymized_telemetry=False),
+    )
 
 
 def get_collection(config: Config | None = None):
