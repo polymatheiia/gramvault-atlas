@@ -600,6 +600,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/import/link-media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Link Media
+         * @description Attach separately downloaded media to already-imported items whose
+         *     export carried no media (someone else's saved post) — the server-side
+         *     counterpart of `gramvault link-media` (audit §5.1). Runs in a worker
+         *     thread (file scanning + hashing) rather than on the event loop, same
+         *     reasoning as import (R2); unlike import there's no natural chunked
+         *     progress to report mid-run, so this is request/response, not a job.
+         */
+        post: operations["link_media_api_import_link_media_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/import/upload": {
         parameters: {
             query?: never;
@@ -1900,6 +1925,37 @@ export interface components {
          * @enum {string}
          */
         JobStatus: "pending" | "running" | "done" | "failed" | "cancelled";
+        /** LinkMediaRequest */
+        LinkMediaRequest: {
+            /**
+             * Copy Files
+             * @default false
+             */
+            copy_files: boolean;
+            /** Source Dir */
+            source_dir: string;
+        };
+        /** LinkMediaResponse */
+        LinkMediaResponse: {
+            /** Failed Files */
+            failed_files: number;
+            /** Files Linked */
+            files_linked: number;
+            /** Files Matched */
+            files_matched: number;
+            /** Files Scanned */
+            files_scanned: number;
+            /** Items Already Linked */
+            items_already_linked: number;
+            /** Items Linked */
+            items_linked: number;
+            /** Summary */
+            summary: string;
+            /** Unmatched Examples */
+            unmatched_examples: string[];
+            /** Unmatched Files */
+            unmatched_files: number;
+        };
         /** MediaFile */
         MediaFile: {
             /** Checksum */
@@ -3326,6 +3382,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    link_media_api_import_link_media_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LinkMediaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LinkMediaResponse"];
                 };
             };
             /** @description Validation Error */

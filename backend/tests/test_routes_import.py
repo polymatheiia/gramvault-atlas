@@ -171,3 +171,20 @@ def test_sample_fixture_zip_uploads_successfully(client: TestClient) -> None:
     body = _wait_for_job(client, response.json()["id"])
     assert body["status"] == "done"
     assert body["total_items"] == 3
+
+
+def test_link_media_rejects_non_directory(client: TestClient, tmp_path: Path) -> None:
+    res = client.post("/api/import/link-media", json={"source_dir": str(tmp_path / "nope-does-not-exist")})
+    assert res.status_code == 422
+
+
+def test_link_media_over_an_empty_directory_matches_nothing(client: TestClient, tmp_path: Path) -> None:
+    source = tmp_path / "downloads"
+    source.mkdir()
+    res = client.post("/api/import/link-media", json={"source_dir": str(source)})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["files_linked"] == 0
+    assert body["items_linked"] == 0
+    assert body["unmatched_files"] == 0
+    assert "0 media file(s) linked" in body["summary"]

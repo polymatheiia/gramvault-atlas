@@ -157,6 +157,58 @@ async def cancel_import_job(
     return job
 
 
+class LinkMediaRequest(BaseModel):
+    source_dir: str
+    # "copy" would shadow pydantic's BaseModel.copy(); copy_files avoids
+    # the warning while keeping the CLI's --copy semantics.
+    copy_files: bool = False
+
+
+class LinkMediaResponse(BaseModel):
+    files_scanned: int
+    files_matched: int
+    files_linked: int
+    items_linked: int
+    items_already_linked: int
+    unmatched_files: int
+    failed_files: int
+    unmatched_examples: list[str]
+    summary: str
+
+
+@router.post("/link-media", response_model=LinkMediaResponse)
+async def link_media(
+    body: LinkMediaRequest,
+    config: Config = Depends(get_config_dependency),
+) -> LinkMediaResponse:
+    """Attach separately downloaded media to already-imported items whose
+    export carried no media (someone else's saved post) — the server-side
+    counterpart of `gramvault link-media` (audit §5.1). Runs in a worker
+    thread (file scanning + hashing) rather than on the event loop, same
+    reasoning as import (R2); unlike import there's no natural chunked
+    progress to report mid-run, so this is request/response, not a job."""
+    from gramvault.ingestion.linker import link_local_media
+
+    try:
+        report = await asyncio.to_thread(
+            link_local_media, Path(body.source_dir), config, copy=body.copy_files
+        )
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return LinkMediaResponse(
+        files_scanned=report.files_scanned,
+        files_matched=report.files_matched,
+        files_linked=report.files_linked,
+        items_linked=report.items_linked,
+        items_already_linked=report.items_already_linked,
+        unmatched_files=report.unmatched_files,
+        failed_files=report.failed_files,
+        unmatched_examples=report.unmatched_examples,
+        summary=report.summary(),
+    )
+
+
 # Re-exported for readability at call sites that only need the enum, e.g.
 # tests asserting on job.status without importing gramvault.models.schemas.
 __all__ = ["router", "ExportFormatError", "JobStatus"]

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { api, uploadFile } from '../api/client'
+import { ApiError, api, uploadFile } from '../api/client'
 import type { EnrichmentProgress, EnrichmentRunResponse, ImportJob, ImportJobListResponse } from '../types'
+import type { Schemas } from '../api/schema'
+
+type LinkMediaResponse = Schemas['LinkMediaResponse']
 
 function JobRow({ job }: { job: ImportJob }) {
   return (
@@ -38,6 +41,12 @@ export function Import() {
   const [enrichRunning, setEnrichRunning] = useState(false)
   const [progress, setProgress] = useState<EnrichmentProgress | null>(null)
   const [enrichError, setEnrichError] = useState<string | null>(null)
+
+  const [linkDir, setLinkDir] = useState('')
+  const [linkCopy, setLinkCopy] = useState(false)
+  const [linking, setLinking] = useState(false)
+  const [linkResult, setLinkResult] = useState<LinkMediaResponse | null>(null)
+  const [linkError, setLinkError] = useState<string | null>(null)
 
   function refreshJobs() {
     api
@@ -117,6 +126,30 @@ export function Import() {
     setEnrichRunning(false)
   }
 
+  async function runLinkMedia() {
+    if (!linkDir.trim()) return
+    setLinking(true)
+    setLinkError(null)
+    setLinkResult(null)
+    try {
+      const res = await api.post<LinkMediaResponse>('/api/import/link-media', {
+        source_dir: linkDir.trim(),
+        copy_files: linkCopy,
+      })
+      setLinkResult(res)
+    } catch (err) {
+      setLinkError(
+        err instanceof ApiError && typeof err.detail === 'string'
+          ? err.detail
+          : err instanceof Error
+            ? err.message
+            : 'Failed to link media',
+      )
+    } finally {
+      setLinking(false)
+    }
+  }
+
   const enrichTotal = progress ? progress.total : 0
   const enrichDoneCount = progress ? progress.done + progress.failed : 0
   const enrichPct = enrichTotal > 0 ? Math.round((enrichDoneCount / enrichTotal) * 100) : 0
@@ -179,6 +212,43 @@ export function Import() {
               <Link to="/" className="text-accent no-underline hover:underline">
                 View in gallery →
               </Link>
+            )}
+          </div>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className="text-lg font-semibold text-slate-100">Link separately downloaded media</h2>
+        <p className="text-sm text-slate-400">
+          Instagram&apos;s export has no media for other people&apos;s saved posts. Point this at a
+          directory downloaded with <code className="text-xs text-slate-300">instaloader</code> (or
+          anything whose filenames carry the post shortcode) to match those items to their media by
+          shortcode — the server-side version of <code className="text-xs text-slate-300">gramvault link-media</code>.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            className="input flex-1"
+            placeholder="/path/to/downloaded/media"
+            value={linkDir}
+            onChange={(e) => setLinkDir(e.target.value)}
+            disabled={linking}
+          />
+          <label className="flex items-center gap-1.5 text-sm text-slate-300">
+            <input type="checkbox" checked={linkCopy} onChange={(e) => setLinkCopy(e.target.checked)} disabled={linking} />
+            Copy instead of hardlink
+          </label>
+          <button type="button" className="btn-secondary" disabled={linking || !linkDir.trim()} onClick={() => void runLinkMedia()}>
+            {linking ? 'Linking…' : 'Link media'}
+          </button>
+        </div>
+        {linkError && <p className="card border-red-900/60 bg-red-950/40 px-4 py-2 text-sm text-red-300">{linkError}</p>}
+        {linkResult && (
+          <div className="card flex flex-col gap-1 px-4 py-3 text-sm text-slate-300">
+            <span>{linkResult.summary}</span>
+            {linkResult.unmatched_examples.length > 0 && (
+              <span className="text-xs text-slate-500">
+                Unmatched, e.g.: {linkResult.unmatched_examples.join(', ')}
+              </span>
             )}
           </div>
         )}

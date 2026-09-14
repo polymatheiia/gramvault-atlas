@@ -2038,6 +2038,80 @@
         "title": "JobStatus",
         "type": "string"
       },
+      "LinkMediaRequest": {
+        "properties": {
+          "copy_files": {
+            "default": false,
+            "title": "Copy Files",
+            "type": "boolean"
+          },
+          "source_dir": {
+            "title": "Source Dir",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_dir"
+        ],
+        "title": "LinkMediaRequest",
+        "type": "object"
+      },
+      "LinkMediaResponse": {
+        "properties": {
+          "failed_files": {
+            "title": "Failed Files",
+            "type": "integer"
+          },
+          "files_linked": {
+            "title": "Files Linked",
+            "type": "integer"
+          },
+          "files_matched": {
+            "title": "Files Matched",
+            "type": "integer"
+          },
+          "files_scanned": {
+            "title": "Files Scanned",
+            "type": "integer"
+          },
+          "items_already_linked": {
+            "title": "Items Already Linked",
+            "type": "integer"
+          },
+          "items_linked": {
+            "title": "Items Linked",
+            "type": "integer"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "unmatched_examples": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unmatched Examples",
+            "type": "array"
+          },
+          "unmatched_files": {
+            "title": "Unmatched Files",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "files_scanned",
+          "files_matched",
+          "files_linked",
+          "items_linked",
+          "items_already_linked",
+          "unmatched_files",
+          "failed_files",
+          "unmatched_examples",
+          "summary"
+        ],
+        "title": "LinkMediaResponse",
+        "type": "object"
+      },
       "MediaFile": {
         "properties": {
           "checksum": {
@@ -4677,6 +4751,48 @@
           }
         },
         "summary": "Cancel Import Job",
+        "tags": [
+          "import"
+        ]
+      }
+    },
+    "/api/import/link-media": {
+      "post": {
+        "description": "Attach separately downloaded media to already-imported items whose\nexport carried no media (someone else's saved post) \u2014 the server-side\ncounterpart of `gramvault link-media` (audit \u00a75.1). Runs in a worker\nthread (file scanning + hashing) rather than on the event loop, same\nreasoning as import (R2); unlike import there's no natural chunked\nprogress to report mid-run, so this is request/response, not a job.",
+        "operationId": "link_media_api_import_link_media_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkMediaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkMediaResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Link Media",
         "tags": [
           "import"
         ]
