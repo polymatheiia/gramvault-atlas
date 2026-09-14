@@ -35,6 +35,7 @@ from gramvault.api import (
     routes_library,
     routes_models,
     routes_pull,
+    routes_system,
 )
 from gramvault.api.csrf import CrossSiteGuard
 from gramvault.api.headers import SafeMedia, SecurityHeadersMiddleware
@@ -156,6 +157,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(routes_models.router)
     app.include_router(routes_chat.router)
     app.include_router(routes_export.router)
+    app.include_router(routes_system.router)
 
     @app.get("/api/health", tags=["meta"])
     def health() -> dict[str, str]:

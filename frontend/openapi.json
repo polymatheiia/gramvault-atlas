@@ -2644,6 +2644,98 @@
         "title": "SuggestedModel",
         "type": "object"
       },
+      "SystemInfo": {
+        "properties": {
+          "allowed_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Hosts",
+            "type": "array"
+          },
+          "auth_disabled_explicitly": {
+            "title": "Auth Disabled Explicitly",
+            "type": "boolean"
+          },
+          "auth_enabled": {
+            "title": "Auth Enabled",
+            "type": "boolean"
+          },
+          "chroma_dir": {
+            "title": "Chroma Dir",
+            "type": "string"
+          },
+          "chroma_telemetry_disabled": {
+            "title": "Chroma Telemetry Disabled",
+            "type": "boolean"
+          },
+          "config_path": {
+            "title": "Config Path",
+            "type": "string"
+          },
+          "db_path": {
+            "title": "Db Path",
+            "type": "string"
+          },
+          "library_dir": {
+            "title": "Library Dir",
+            "type": "string"
+          },
+          "pull_enabled": {
+            "title": "Pull Enabled",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "server_host": {
+            "title": "Server Host",
+            "type": "string"
+          },
+          "server_port": {
+            "title": "Server Port",
+            "type": "integer"
+          },
+          "transcription_compute_type": {
+            "title": "Transcription Compute Type",
+            "type": "string"
+          },
+          "transcription_device": {
+            "title": "Transcription Device",
+            "type": "string"
+          },
+          "transcription_model_size": {
+            "title": "Transcription Model Size",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_host",
+          "server_port",
+          "allowed_hosts",
+          "auth_enabled",
+          "auth_disabled_explicitly",
+          "pull_enabled",
+          "transcription_model_size",
+          "transcription_device",
+          "transcription_compute_type",
+          "chroma_telemetry_disabled",
+          "config_path",
+          "library_dir",
+          "db_path",
+          "chroma_dir"
+        ],
+        "title": "SystemInfo",
+        "type": "object"
+      },
       "Tag": {
         "properties": {
           "id": {
@@ -5803,6 +5895,27 @@
         "summary": "Get Session",
         "tags": [
           "pull"
+        ]
+      }
+    },
+    "/api/system/info": {
+      "get": {
+        "operationId": "system_info_api_system_info_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "System Info",
+        "tags": [
+          "system"
         ]
       }
     }

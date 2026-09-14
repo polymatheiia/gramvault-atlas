@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/client'
+import type { Schemas } from '../api/schema'
 import type {
   AiTask,
   ExportJobStatus,
@@ -18,8 +19,20 @@ import type {
   VaultPathCheckResponse,
 } from '../types'
 
+type SystemInfo = Schemas['SystemInfo']
+type PullSession = Schemas['PullSessionResponse']
+
 const AI_TASKS: AiTask[] = ['chat', 'vision', 'embedding', 'categorize', 'digest']
 const PROVIDER_KINDS: ProviderKind[] = ['ollama', 'openai', 'anthropic']
+
+const TABS = [
+  { id: 'library', label: 'Library & Obsidian' },
+  { id: 'models', label: 'AI Models' },
+  { id: 'instagram', label: 'Instagram' },
+  { id: 'security', label: 'Security' },
+  { id: 'advanced', label: 'Advanced' },
+] as const
+type TabId = (typeof TABS)[number]['id']
 
 function humanBytes(n: number | null): string {
   if (!n) return ''
@@ -34,6 +47,39 @@ function humanBytes(n: number | null): string {
 }
 
 export function Settings() {
+  const [tab, setTab] = useState<TabId>('library')
+
+  return (
+    <div className="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-6">
+      <div role="tablist" aria-label="Settings sections" className="flex flex-wrap gap-1 border-b border-surface-border pb-2">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+              tab === t.id
+                ? 'bg-surface-overlay text-slate-100'
+                : 'text-slate-400 hover:bg-surface-raised hover:text-slate-200'
+            }`}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'library' && <LibrarySettings />}
+      {tab === 'models' && <ModelSettings />}
+      {tab === 'instagram' && <InstagramSettings />}
+      {tab === 'security' && <SecuritySettings />}
+      {tab === 'advanced' && <AdvancedSettings />}
+    </div>
+  )
+}
+
+function LibrarySettings() {
   const [vaultPath, setVaultPath] = useState('')
   const [subfolder, setSubfolder] = useState('')
   const [validation, setValidation] = useState<VaultPathCheckResponse | null>(null)
@@ -130,96 +176,314 @@ export function Settings() {
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-6">
-      <section className="flex flex-col gap-3">
-        <h1 className="text-lg font-semibold text-slate-100">Obsidian export</h1>
+    <section className="flex flex-col gap-3">
+      <h1 className="text-lg font-semibold text-slate-100">Obsidian export</h1>
 
-        <label className="flex flex-col gap-1">
-          <span className="label">Vault folder path</span>
-          <span className="text-xs text-slate-500">
-            Leave blank to validate/use the path already configured in <code>config.yaml</code> (
-            <code>paths.obsidian_vault_dir</code>).
+      <label className="flex flex-col gap-1">
+        <span className="label">Vault folder path</span>
+        <span className="text-xs text-slate-500">
+          Leave blank to validate/use the path already configured in <code>config.yaml</code> (
+          <code>paths.obsidian_vault_dir</code>).
+        </span>
+        <input
+          className="input"
+          placeholder="C:\Users\you\ObsidianVault"
+          value={vaultPath}
+          onChange={(e) => setVaultPath(e.target.value)}
+        />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="label">Subfolder within vault (optional)</span>
+        <input
+          className="input"
+          placeholder="GramVault"
+          value={subfolder}
+          onChange={(e) => setSubfolder(e.target.value)}
+        />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="label">Note layout</span>
+        <span className="text-xs text-slate-500">
+          How notes are foldered. Changing this moves notes on the next export; your notes below the{' '}
+          <code>%% gramvault:end %%</code> marker are always kept.
+        </span>
+        <select
+          className="input w-auto"
+          value={layout}
+          onChange={(e) => void saveLayout(e.target.value as ExportLayout)}
+        >
+          <option value="flat">Flat — one folder</option>
+          <option value="by-category">By category — {'<category>/<note>'}</option>
+          <option value="by-date">By date — {'<YYYY-MM>/<note>'}</option>
+        </select>
+      </label>
+
+      <div className="flex gap-2">
+        <button type="button" className="btn-secondary" onClick={() => void validate()} disabled={validating}>
+          {validating ? 'Validating…' : 'Validate path'}
+        </button>
+        <button type="button" className="btn-secondary" onClick={() => void saveVaultPath()} disabled={saving}>
+          {saving ? 'Saving…' : 'Save vault path'}
+        </button>
+        <button type="button" className="btn-primary" onClick={() => void runExport()} disabled={exporting}>
+          {exporting ? 'Exporting…' : 'Export to Obsidian'}
+        </button>
+      </div>
+
+      {validation && (
+        <p className={`text-sm ${validation.valid ? 'text-emerald-300' : 'text-red-300'}`}>
+          {validation.valid ? (saved ? 'Saved.' : 'Valid vault path.') : validation.reason}
+        </p>
+      )}
+
+      {error && <p className="card border-red-900/60 bg-red-950/40 px-4 py-2 text-sm text-red-300">{error}</p>}
+
+      {job && (
+        <div className="card flex flex-col gap-1 px-4 py-3 text-sm text-slate-300">
+          <span>
+            Export {job.status}: {job.processed_items}/{job.total_items} items
           </span>
+          <span className="text-xs text-slate-500">
+            {job.notes_written} notes written, {job.notes_updated} updated, {job.media_files_copied} media files copied
+          </span>
+          {job.failed_items > 0 && <span className="text-amber-300">{job.failed_items} items skipped</span>}
+          {job.skipped.length > 0 && (
+            <ul className="list-disc pl-5 text-xs text-slate-500">
+              {job.skipped.map((s, i) => (
+                <li key={i}>
+                  {s.item_id !== null ? `Item #${s.item_id}` : 'Unknown item'}: {s.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+          {job.error_message && <span className="text-red-300">{job.error_message}</span>}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function InstagramSettings() {
+  const [session, setSession] = useState<PullSession | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api
+      .get<PullSession>('/api/pull/session')
+      .then(setSession)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load'))
+  }, [])
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h1 className="text-lg font-semibold text-slate-100">Instagram</h1>
+      {error && <p className="card border-red-900/60 bg-red-950/40 px-4 py-2 text-sm text-red-300">{error}</p>}
+      {!session && !error && <p className="text-sm text-slate-500">Loading…</p>}
+      {session && !session.enabled && (
+        <div className="card flex flex-col gap-2 px-4 py-3 text-sm text-slate-300">
+          <p>Pulling from Instagram is off.</p>
+          <p className="text-xs text-slate-500">
+            Enable it by adding a <code>pull: {'{'}enabled: true{'}'}</code> block to{' '}
+            <code>config.yaml</code> and restarting the server — see the{' '}
+            <a href="/pull" className="text-accent underline">
+              Pull page
+            </a>{' '}
+            for details.
+          </p>
+        </div>
+      )}
+      {session?.enabled && (
+        <div className="card flex flex-col gap-2 px-4 py-3 text-sm text-slate-300">
+          <p>
+            {session.configured ? (
+              <>
+                Connected as <span className="text-slate-100">{session.username}</span>.
+              </>
+            ) : (
+              'Not connected yet.'
+            )}
+          </p>
+          {session.last_verified_at && (
+            <p className="text-xs text-slate-500">Last verified {new Date(session.last_verified_at).toLocaleString()}</p>
+          )}
+          <a href="/pull" className="btn-secondary w-fit no-underline">
+            Manage on the Pull page
+          </a>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function SecuritySettings() {
+  const [info, setInfo] = useState<SystemInfo | null>(null)
+  const [ov, setOv] = useState<ModelsOverview | null>(null)
+  const [tokenInput, setTokenInput] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [status, setStatus] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      const [i, o] = await Promise.all([
+        api.get<SystemInfo>('/api/system/info'),
+        api.get<ModelsOverview>('/api/models'),
+      ])
+      setInfo(i)
+      setOv(o)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load')
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  function generate() {
+    const bytes = new Uint8Array(24)
+    crypto.getRandomValues(bytes)
+    const token = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    setTokenInput(token)
+  }
+
+  async function saveToken() {
+    setError(null)
+    setStatus(null)
+    try {
+      await api.put('/api/models/secrets', { set_auth_token: true, auth_token: tokenInput || null })
+      setStatus(tokenInput ? 'Token saved — store it somewhere safe, it is never shown again.' : 'Token cleared.')
+      setTokenInput('')
+      await refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save')
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-4">
+      <h1 className="text-lg font-semibold text-slate-100">Security</h1>
+      {error && <p className="card border-red-900/60 bg-red-950/40 px-4 py-2 text-sm text-red-300">{error}</p>}
+      {!info && !error && <p className="text-sm text-slate-500">Loading…</p>}
+
+      <div className="flex flex-col gap-2">
+        <span className="label">API auth token</span>
+        <p className="text-xs text-slate-500">
+          When set, every request to this server needs <code>Authorization: Bearer &lt;token&gt;</code>. Only bind to{' '}
+          <code>0.0.0.0</code> with a token set.{' '}
+          {ov?.auth_token_set ? <span className="text-emerald-300">Currently set.</span> : 'Currently off.'}
+        </p>
+        <div className="flex flex-wrap gap-2">
           <input
             className="input"
-            placeholder="C:\Users\you\ObsidianVault"
-            value={vaultPath}
-            onChange={(e) => setVaultPath(e.target.value)}
+            type="password"
+            placeholder={ov?.auth_token_set ? '•••••• (enter a new token to change)' : 'set a long random token'}
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
           />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="label">Subfolder within vault (optional)</span>
-          <input
-            className="input"
-            placeholder="GramVault"
-            value={subfolder}
-            onChange={(e) => setSubfolder(e.target.value)}
-          />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="label">Note layout</span>
-          <span className="text-xs text-slate-500">
-            How notes are foldered. Changing this moves notes on the next export; your notes below the{' '}
-            <code>%% gramvault:end %%</code> marker are always kept.
-          </span>
-          <select
-            className="input w-auto"
-            value={layout}
-            onChange={(e) => void saveLayout(e.target.value as ExportLayout)}
-          >
-            <option value="flat">Flat — one folder</option>
-            <option value="by-category">By category — {'<category>/<note>'}</option>
-            <option value="by-date">By date — {'<YYYY-MM>/<note>'}</option>
-          </select>
-        </label>
-
-        <div className="flex gap-2">
-          <button type="button" className="btn-secondary" onClick={() => void validate()} disabled={validating}>
-            {validating ? 'Validating…' : 'Validate path'}
+          <button type="button" className="btn-ghost" onClick={generate}>
+            Generate
           </button>
-          <button type="button" className="btn-secondary" onClick={() => void saveVaultPath()} disabled={saving}>
-            {saving ? 'Saving…' : 'Save vault path'}
-          </button>
-          <button type="button" className="btn-primary" onClick={() => void runExport()} disabled={exporting}>
-            {exporting ? 'Exporting…' : 'Export to Obsidian'}
+          <button type="button" className="btn-secondary" onClick={() => void saveToken()}>
+            {tokenInput ? 'Save' : ov?.auth_token_set ? 'Clear' : 'Save'}
           </button>
         </div>
+        {status && <p className="text-sm text-emerald-300">{status}</p>}
+      </div>
 
-        {validation && (
-          <p className={`text-sm ${validation.valid ? 'text-emerald-300' : 'text-red-300'}`}>
-            {validation.valid ? (saved ? 'Saved.' : 'Valid vault path.') : validation.reason}
-          </p>
-        )}
-
-        {error && <p className="card border-red-900/60 bg-red-950/40 px-4 py-2 text-sm text-red-300">{error}</p>}
-
-        {job && (
+      {info && (
+        <div className="flex flex-col gap-2">
+          <span className="label">Bind address & hosts</span>
           <div className="card flex flex-col gap-1 px-4 py-3 text-sm text-slate-300">
             <span>
-              Export {job.status}: {job.processed_items}/{job.total_items} items
+              Bound to <code className="text-slate-100">{info.server_host}:{info.server_port}</code>
             </span>
             <span className="text-xs text-slate-500">
-              {job.notes_written} notes written, {job.notes_updated} updated, {job.media_files_copied} media files copied
+              Accepted Host headers: localhost, 127.0.0.1, [::1]
+              {info.allowed_hosts.length > 0 ? `, ${info.allowed_hosts.join(', ')}` : ''}
             </span>
-            {job.failed_items > 0 && <span className="text-amber-300">{job.failed_items} items skipped</span>}
-            {job.skipped.length > 0 && (
-              <ul className="list-disc pl-5 text-xs text-slate-500">
-                {job.skipped.map((s, i) => (
-                  <li key={i}>
-                    {s.item_id !== null ? `Item #${s.item_id}` : 'Unknown item'}: {s.reason}
-                  </li>
-                ))}
-              </ul>
+            {info.server_host !== '127.0.0.1' && info.server_host !== 'localhost' && !info.auth_enabled && (
+              <span className="text-amber-300">
+                Bound to a non-loopback host with no auth token set — anyone who can reach this address has full
+                access.
+              </span>
             )}
-            {job.error_message && <span className="text-red-300">{job.error_message}</span>}
           </div>
-        )}
-      </section>
+        </div>
+      )}
+    </section>
+  )
+}
 
-      <ModelSettings />
-    </div>
+function AdvancedSettings() {
+  const [info, setInfo] = useState<SystemInfo | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    api
+      .get<SystemInfo>('/api/system/info')
+      .then(setInfo)
+      .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load'))
+  }, [])
+
+  return (
+    <section className="flex flex-col gap-4">
+      <h1 className="text-lg font-semibold text-slate-100">Advanced</h1>
+      {error && <p className="card border-red-900/60 bg-red-950/40 px-4 py-2 text-sm text-red-300">{error}</p>}
+      {!info && !error && <p className="text-sm text-slate-500">Loading…</p>}
+      {info && (
+        <>
+          <div className="flex flex-col gap-2">
+            <span className="label">Transcription (Whisper)</span>
+            <div className="card flex flex-col gap-1 px-4 py-3 text-sm text-slate-300">
+              <span>
+                Model <code className="text-slate-100">{info.transcription_model_size}</code> on{' '}
+                <code className="text-slate-100">{info.transcription_device}</code> (
+                {info.transcription_compute_type})
+              </span>
+              <span className="text-xs text-slate-500">
+                Set via <code>transcription:</code> in <code>config.yaml</code>. The first transcription downloads the
+                model (~1.6 GB for the default <code>turbo</code> size) from Hugging Face.
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className="label">Privacy</span>
+            <div className="card flex flex-col gap-1 px-4 py-3 text-sm text-slate-300">
+              <span>
+                Chroma anonymised telemetry:{' '}
+                {info.chroma_telemetry_disabled ? (
+                  <span className="text-emerald-300">disabled</span>
+                ) : (
+                  <span className="text-amber-300">enabled</span>
+                )}
+              </span>
+              <span className="text-xs text-slate-500">No other network calls happen by default except to a local Ollama.</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className="label">Data locations</span>
+            <div className="card flex flex-col gap-1 px-4 py-3 text-sm text-slate-300">
+              <span>
+                Config: <code className="text-xs text-slate-400">{info.config_path}</code>
+              </span>
+              <span>
+                Library: <code className="text-xs text-slate-400">{info.library_dir}</code>
+              </span>
+              <span>
+                Database: <code className="text-xs text-slate-400">{info.db_path}</code>
+              </span>
+              <span>
+                Vectors: <code className="text-xs text-slate-400">{info.chroma_dir}</code>
+              </span>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
   )
 }
 
@@ -232,7 +496,6 @@ function ModelSettings() {
   const [reembedJob, setReembedJob] = useState<Job | null>(null)
   const [pullName, setPullName] = useState('')
   const [tests, setTests] = useState<Partial<Record<AiTask, TestTaskResult | 'running'>>>({})
-  const [tokenInput, setTokenInput] = useState('')
 
   const refresh = useCallback(async () => {
     try {
@@ -330,7 +593,7 @@ function ModelSettings() {
 
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-lg font-semibold text-slate-100">AI models & providers</h2>
+      <h1 className="text-lg font-semibold text-slate-100">AI models & providers</h1>
       {error && <p className="card border-red-900/60 bg-red-950/40 px-4 py-2 text-sm text-red-300">{error}</p>}
       {!ov && <p className="text-sm text-slate-500">Loading…</p>}
 
@@ -433,35 +696,6 @@ function ModelSettings() {
                   )}
                 </div>
               ))}
-            </div>
-          </div>
-
-          {/* --- api auth token --- */}
-          <div className="flex flex-col gap-2">
-            <span className="label">API auth token</span>
-            <p className="text-xs text-slate-500">
-              When set, every request to this server needs <code>Authorization: Bearer &lt;token&gt;</code>. Only bind to
-              <code>0.0.0.0</code> with a token set.{' '}
-              {ov.auth_token_set ? <span className="text-emerald-300">Currently set.</span> : 'Currently off.'}
-            </p>
-            <div className="flex gap-2">
-              <input
-                className="input"
-                type="password"
-                placeholder={ov.auth_token_set ? '•••••• (enter a new token to change)' : 'set a long random token'}
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-              />
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  void saveSecret({ set_auth_token: true, auth_token: tokenInput || null })
-                  setTokenInput('')
-                }}
-              >
-                {tokenInput ? 'Save' : ov.auth_token_set ? 'Clear' : 'Save'}
-              </button>
             </div>
           </div>
         </>
