@@ -205,8 +205,31 @@ export interface paths {
         /** List Templates */
         get: operations["list_templates_api_digests_templates_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Or Update Template
+         * @description Create a user template, or overwrite the existing user template of
+         *     the same name. A name matching a builtin template shadows it (see
+         *     `load_templates`) rather than erroring.
+         */
+        post: operations["create_or_update_template_api_digests_templates_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/digests/templates/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Template */
+        delete: operations["delete_template_api_digests_templates__name__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -223,7 +246,8 @@ export interface paths {
         get: operations["get_digest_api_digests__digest_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete Digest */
+        delete: operations["delete_digest_api_digests__digest_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1429,8 +1453,12 @@ export interface components {
             category?: string | null;
             /** Item Ids */
             item_ids?: number[] | null;
+            /** Model */
+            model?: string | null;
             /** Name */
             name?: string | null;
+            /** Provider */
+            provider?: string | null;
             /** Query */
             query?: string | null;
             /** Template */
@@ -1859,6 +1887,10 @@ export interface components {
             category?: string | null;
             /** Item Ids */
             item_ids?: number[] | null;
+            /** Model */
+            model?: string | null;
+            /** Provider */
+            provider?: string | null;
             /** Query */
             query?: string | null;
             /** Template */
@@ -2147,6 +2179,29 @@ export interface components {
             source: string;
             /** Version */
             version: string;
+        };
+        /** TemplateWriteRequest */
+        TemplateWriteRequest: {
+            /**
+             * Default Task
+             * @default digest
+             */
+            default_task: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Extract Prompt */
+            extract_prompt: string;
+            /** Extract Schema */
+            extract_schema?: {
+                [key: string]: unknown;
+            } | unknown[] | null;
+            /** Name */
+            name: string;
+            /** Reduce Prompt */
+            reduce_prompt: string;
         };
         /** TestTaskRequest */
         TestTaskRequest: {
@@ -2590,6 +2645,68 @@ export interface operations {
             };
         };
     };
+    create_or_update_template_api_digests_templates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateInfo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_template_api_digests_templates__name__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_digest_api_digests__digest_id__get: {
         parameters: {
             query?: never;
@@ -2609,6 +2726,35 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["Digest"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_digest_api_digests__digest_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                digest_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

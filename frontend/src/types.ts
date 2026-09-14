@@ -370,6 +370,10 @@ export interface DigestSelectionRequest {
 
 export interface DigestPreflightRequest extends DigestSelectionRequest {
   template: string
+  /** Per-run override of the template's routed provider/model — both
+   * must be given together, or the override is ignored. */
+  provider?: string | null
+  model?: string | null
 }
 
 export interface DigestPreflightResponse {
@@ -394,6 +398,15 @@ export interface DigestCreateResponse {
 
 export interface DigestExportResponse {
   path: string
+}
+
+export interface DigestTemplateWriteRequest {
+  name: string
+  description?: string
+  extract_prompt: string
+  reduce_prompt: string
+  default_task?: string
+  extract_schema?: unknown
 }
 
 export type ExportLayout = 'flat' | 'by-category' | 'by-date'

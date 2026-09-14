@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { ApiError, api } from '../api/client'
+import { ChatMarkdown } from '../lib/markdown'
 import type {
   CategoryListResponse,
   Digest as DigestRow,
@@ -7,7 +9,9 @@ import type {
   DigestExportResponse,
   DigestPreflightResponse,
   DigestTemplateInfo,
+  DigestTemplateWriteRequest,
   Job,
+  ModelsOverview,
 } from '../types'
 
 function formatCost(cost: number | null): string {
@@ -43,15 +47,22 @@ const STATUS_STYLES: Record<string, string> = {
 }
 
 export function Digest() {
+  const location = useLocation()
   const [templates, setTemplates] = useState<DigestTemplateInfo[]>([])
   const [categories, setCategories] = useState<CategoryListResponse | null>(null)
+  const [models, setModels] = useState<ModelsOverview | null>(null)
   const [history, setHistory] = useState<DigestRow[]>([])
 
   const [template, setTemplate] = useState('')
   const [category, setCategory] = useState('')
   const [query, setQuery] = useState('')
+  const [itemIds, setItemIds] = useState<number[]>([])
   const [name, setName] = useState('')
   const [showPrompts, setShowPrompts] = useState(false)
+  const [showTemplateEditor, setShowTemplateEditor] = useState(false)
+
+  const [overrideProvider, setOverrideProvider] = useState('')
+  const [overrideModel, setOverrideModel] = useState('')
 
   const [preflight, setPreflight] = useState<DigestPreflightResponse | null>(null)
   const [preflighting, setPreflighting] = useState(false)
@@ -67,13 +78,13 @@ export function Digest() {
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const selected = templates.find((t) => t.name === template)
-  const hasSelection = !!(category || query.trim())
+  const hasSelection = !!(category || query.trim() || itemIds.length > 0)
 
   const refreshHistory = useCallback(() => {
     api.get<DigestRow[]>('/api/digests').then(setHistory).catch(() => undefined)
   }, [])
 
-  useEffect(() => {
+  const refreshTemplates = useCallback(() => {
     api
       .get<DigestTemplateInfo[]>('/api/digests/templates')
       .then((list) => {
@@ -81,14 +92,30 @@ export function Digest() {
         setTemplate((t) => t || list[0]?.name || '')
       })
       .catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    refreshTemplates()
     api.get<CategoryListResponse>('/api/library/categories').then(setCategories).catch(() => undefined)
+    api.get<ModelsOverview>('/api/models').then(setModels).catch(() => undefined)
     refreshHistory()
-  }, [refreshHistory])
+  }, [refreshHistory, refreshTemplates])
+
+  // A gallery selection ("Digest these") hands off its item ids via
+  // router state — take it once, on arrival, rather than re-reading on
+  // every render (location.state is stable per navigation but would
+  // otherwise keep re-triggering this if it were a dependency alongside
+  // other state this effect might reasonably want to read).
+  useEffect(() => {
+    const ids = (location.state as { itemIds?: number[] } | null)?.itemIds
+    if (ids && ids.length > 0) setItemIds(ids)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Reset the estimate whenever the selection changes.
   useEffect(() => {
     setPreflight(null)
-  }, [template, category, query])
+  }, [template, category, query, itemIds, overrideProvider, overrideModel])
 
   // Poll the running digest's job.
   useEffect(() => {
@@ -128,6 +155,16 @@ export function Digest() {
     }
   }, [busy, tick, refreshHistory])
 
+  function selectionPayload() {
+    return {
+      category: itemIds.length > 0 ? null : category || null,
+      query: itemIds.length > 0 ? null : query.trim() || null,
+      item_ids: itemIds.length > 0 ? itemIds : null,
+      provider: overrideProvider && overrideModel.trim() ? overrideProvider : null,
+      model: overrideProvider && overrideModel.trim() ? overrideModel.trim() : null,
+    }
+  }
+
   async function runPreflight() {
     if (!template || !hasSelection) return
     setError(null)
@@ -135,8 +172,7 @@ export function Digest() {
     try {
       const res = await api.post<DigestPreflightResponse>('/api/digests/preflight', {
         template,
-        category: category || null,
-        query: query.trim() || null,
+        ...selectionPayload(),
       })
       setPreflight(res)
     } catch (err) {
@@ -161,8 +197,7 @@ export function Digest() {
     try {
       const res = await api.post<DigestCreateResponse>('/api/digests', {
         template,
-        category: category || null,
-        query: query.trim() || null,
+        ...selectionPayload(),
         name: name.trim() || null,
       })
       activeIdRef.current = res.digest_id
@@ -211,6 +246,20 @@ export function Digest() {
     }
   }
 
+  async function deleteDigest(id: number) {
+    if (!confirm('Delete this digest?')) return
+    await api.delete(`/api/digests/${id}`)
+    if (current?.id === id) setCurrent(null)
+    refreshHistory()
+  }
+
+  async function deleteTemplate(name: string) {
+    if (!confirm(`Delete template "${name}"?`)) return
+    await api.delete(`/api/digests/templates/${encodeURIComponent(name)}`)
+    setTemplate('')
+    refreshTemplates()
+  }
+
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-6">
       <section className="flex flex-col gap-1">
@@ -223,7 +272,16 @@ export function Digest() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Template</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Template</h2>
+          <button
+            type="button"
+            className="text-xs text-accent no-underline hover:underline"
+            onClick={() => setShowTemplateEditor((v) => !v)}
+          >
+            {showTemplateEditor ? 'Close editor' : 'New / edit templates'}
+          </button>
+        </div>
         <select className="input" value={template} onChange={(e) => setTemplate(e.target.value)}>
           {templates.map((t) => (
             <option key={t.name} value={t.name}>
@@ -235,13 +293,24 @@ export function Digest() {
         {selected && (
           <div className="flex flex-col gap-2 text-xs text-slate-500">
             <p>{selected.description}</p>
-            <button
-              type="button"
-              className="w-fit text-accent no-underline hover:underline"
-              onClick={() => setShowPrompts((v) => !v)}
-            >
-              {showPrompts ? 'Hide' : 'Show'} prompts
-            </button>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                className="w-fit text-accent no-underline hover:underline"
+                onClick={() => setShowPrompts((v) => !v)}
+              >
+                {showPrompts ? 'Hide' : 'Show'} prompts
+              </button>
+              {selected.source === 'user' && (
+                <button
+                  type="button"
+                  className="w-fit text-red-400 no-underline hover:underline"
+                  onClick={() => void deleteTemplate(selected.name)}
+                >
+                  Delete template
+                </button>
+              )}
+            </div>
             {showPrompts && (
               <div className="card flex flex-col gap-2 px-3 py-2">
                 <p>
@@ -254,30 +323,45 @@ export function Digest() {
             )}
           </div>
         )}
+        {showTemplateEditor && <TemplateEditor onSaved={() => { refreshTemplates(); setShowTemplateEditor(false) }} />}
       </section>
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Selection</h2>
-        <label className="flex flex-col gap-1 text-sm text-slate-300">
-          Category
-          <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="">— none —</option>
-            {categories?.categories.map((c) => (
-              <option key={c.id ?? c.name} value={c.name}>
-                {c.name} ({c.count})
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1 text-sm text-slate-300">
-          Search query (optional — narrows to the semantic-search hits)
-          <input
-            className="input"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="e.g. nervous system regulation"
-          />
-        </label>
+        {itemIds.length > 0 ? (
+          <div className="card flex items-center justify-between gap-2 px-3 py-2 text-sm text-slate-300">
+            <span>
+              <span className="font-semibold text-slate-100">{itemIds.length}</span> item(s) from your gallery
+              selection
+            </span>
+            <button type="button" className="btn-ghost text-xs" onClick={() => setItemIds([])}>
+              Clear, use filters instead
+            </button>
+          </div>
+        ) : (
+          <>
+            <label className="flex flex-col gap-1 text-sm text-slate-300">
+              Category
+              <select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>
+                <option value="">— none —</option>
+                {categories?.categories.map((c) => (
+                  <option key={c.id ?? c.name} value={c.name}>
+                    {c.name} ({c.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-300">
+              Search query (optional — narrows to the semantic-search hits)
+              <input
+                className="input"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="e.g. nervous system regulation"
+              />
+            </label>
+          </>
+        )}
         <label className="flex flex-col gap-1 text-sm text-slate-300">
           Name (optional)
           <input
@@ -286,6 +370,26 @@ export function Digest() {
             onChange={(e) => setName(e.target.value)}
             placeholder="defaults to the template + item count"
           />
+        </label>
+        <label className="flex flex-col gap-1 text-sm text-slate-300">
+          Model override (optional — defaults to the template's routed provider/model)
+          <div className="flex gap-2">
+            <select className="input w-auto" value={overrideProvider} onChange={(e) => setOverrideProvider(e.target.value)}>
+              <option value="">— default —</option>
+              {models?.providers.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <input
+              className="input flex-1"
+              value={overrideModel}
+              onChange={(e) => setOverrideModel(e.target.value)}
+              placeholder="model name"
+              disabled={!overrideProvider}
+            />
+          </div>
         </label>
       </section>
 
@@ -373,6 +477,15 @@ export function Digest() {
                   )}
                 </>
               )}
+              {current.id != null && (
+                <button
+                  type="button"
+                  className="text-red-400 no-underline hover:underline"
+                  onClick={() => void deleteDigest(current.id as number)}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </div>
           {exportedPath && (
@@ -387,9 +500,9 @@ export function Digest() {
           )}
           {current.error_message && <p className="text-sm text-red-300">{current.error_message}</p>}
           {current.markdown && (
-            <pre className="card max-h-[32rem] overflow-auto whitespace-pre-wrap px-4 py-3 text-xs text-slate-200">
-              {current.markdown}
-            </pre>
+            <div className="card max-h-[32rem] overflow-auto px-4 py-3 text-sm text-slate-200">
+              <ChatMarkdown content={current.markdown} />
+            </div>
           )}
         </section>
       )}
@@ -414,6 +527,76 @@ export function Digest() {
           </div>
         </section>
       )}
+    </div>
+  )
+}
+
+function TemplateEditor({ onSaved }: { onSaved: () => void }) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [extractPrompt, setExtractPrompt] = useState('')
+  const [reducePrompt, setReducePrompt] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function save() {
+    if (!name.trim() || !extractPrompt.trim() || !reducePrompt.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      const body: DigestTemplateWriteRequest = {
+        name: name.trim(),
+        description: description.trim(),
+        extract_prompt: extractPrompt.trim(),
+        reduce_prompt: reducePrompt.trim(),
+      }
+      await api.post('/api/digests/templates', body)
+      setName('')
+      setDescription('')
+      setExtractPrompt('')
+      setReducePrompt('')
+      onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save template')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="card flex flex-col gap-2 px-4 py-3">
+      <p className="text-xs text-slate-500">
+        A name matching a built-in template shadows it with your own version — the built-in stays available
+        under the same name once you delete your copy.
+      </p>
+      <label className="flex flex-col gap-1 text-sm text-slate-300">
+        Name
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="my-template" />
+      </label>
+      <label className="flex flex-col gap-1 text-sm text-slate-300">
+        Description
+        <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} />
+      </label>
+      <label className="flex flex-col gap-1 text-sm text-slate-300">
+        Extract prompt
+        <textarea
+          className="input min-h-24"
+          value={extractPrompt}
+          onChange={(e) => setExtractPrompt(e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1 text-sm text-slate-300">
+        Reduce prompt
+        <textarea
+          className="input min-h-24"
+          value={reducePrompt}
+          onChange={(e) => setReducePrompt(e.target.value)}
+        />
+      </label>
+      {error && <p className="text-sm text-red-300">{error}</p>}
+      <button type="button" className="btn-primary w-fit" disabled={saving} onClick={() => void save()}>
+        {saving ? 'Saving…' : 'Save template'}
+      </button>
     </div>
   )
 }

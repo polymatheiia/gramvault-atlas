@@ -42,6 +42,41 @@ class TestTemplates:
         assert {"book-titles", "advice-digest", "link-list"} <= names
         assert all(t["extract_prompt"] and t["reduce_prompt"] for t in body)
 
+    def test_create_user_template_then_it_lists(self, client: TestClient) -> None:
+        res = client.post(
+            "/api/digests/templates",
+            json={
+                "name": "my-custom",
+                "description": "test template",
+                "extract_prompt": "extract stuff",
+                "reduce_prompt": "reduce stuff",
+            },
+        )
+        assert res.status_code == 201
+        body = res.json()
+        assert body["source"] == "user"
+        assert body["name"] == "my-custom"
+
+        names = {t["name"] for t in client.get("/api/digests/templates").json()}
+        assert "my-custom" in names
+
+    def test_delete_user_template(self, client: TestClient) -> None:
+        client.post(
+            "/api/digests/templates",
+            json={"name": "throwaway", "extract_prompt": "x", "reduce_prompt": "y"},
+        )
+        res = client.delete("/api/digests/templates/throwaway")
+        assert res.status_code == 204
+        names = {t["name"] for t in client.get("/api/digests/templates").json()}
+        assert "throwaway" not in names
+
+    def test_delete_unknown_template_404(self, client: TestClient) -> None:
+        assert client.delete("/api/digests/templates/nope-at-all").status_code == 404
+
+    def test_delete_builtin_template_409(self, client: TestClient) -> None:
+        res = client.delete("/api/digests/templates/book-titles")
+        assert res.status_code == 409
+
 
 class TestPreflight:
     def test_estimates_a_category_selection(self, client: TestClient, tmp_config: Config) -> None:
@@ -74,9 +109,7 @@ class TestCreate:
         _seed(tmp_config, "read Dune")
         provider = AsyncMock()
         provider.ensure_ready.side_effect = ProviderNotReadyError("Ollama is not running")
-        with patch(
-            "gramvault.api.routes_digests.get_provider", return_value=(provider, "m")
-        ):
+        with patch("gramvault.ai.digest.get_provider", return_value=(provider, "m")):
             res = client.post(
                 "/api/digests", json={"template": "book-titles", "category": "books/manga"}
             )
@@ -87,10 +120,7 @@ class TestCreate:
         _seed(tmp_config, "read Dune")
         with session_scope(tmp_config) as conn:
             jobs.create(conn, JobKind.DIGEST, params={})
-        with patch(
-            "gramvault.api.routes_digests.get_provider",
-            return_value=(AsyncMock(), "m"),
-        ):
+        with patch("gramvault.ai.digest.get_provider", return_value=(AsyncMock(), "m")):
             res = client.post(
                 "/api/digests", json={"template": "book-titles", "category": "books/manga"}
             )
@@ -102,10 +132,7 @@ class TestCreate:
         _seed(tmp_config, "read Dune")
         with session_scope(tmp_config) as conn:
             jobs.create(conn, JobKind.ENRICH, params={})
-        with patch(
-            "gramvault.api.routes_digests.get_provider",
-            return_value=(AsyncMock(), "m"),
-        ):
+        with patch("gramvault.ai.digest.get_provider", return_value=(AsyncMock(), "m")):
             res = client.post(
                 "/api/digests", json={"template": "book-titles", "category": "books/manga"}
             )
@@ -124,9 +151,7 @@ class TestCreate:
             ChatResult(text=f"## Sci-fi\n- **Dune** — Herbert ([reel](https://x)) [[item:{i1}]]\n"),
         ]
 
-        with patch(
-            "gramvault.api.routes_digests.get_provider", return_value=(provider, "fake-model")
-        ), patch("gramvault.ai.digest.get_provider", return_value=(provider, "fake-model")):
+        with patch("gramvault.ai.digest.get_provider", return_value=(provider, "fake-model")):
             res = client.post(
                 "/api/digests",
                 json={"template": "book-titles", "category": "books/manga", "name": "My books"},
@@ -194,3 +219,62 @@ class TestCreate:
         assert dl.text == "# hi\n"
         assert "attachment" in dl.headers["content-disposition"]
         assert "done-one.md" in dl.headers["content-disposition"]
+
+    def test_delete_digest(self, client: TestClient, tmp_config: Config) -> None:
+        with session_scope(tmp_config) as conn:
+            digest_id = conn.execute(
+                "INSERT INTO digests (name, template, status, selection_json, item_ids_json) "
+                "VALUES ('to delete', 'book-titles', 'done', '{}', '[]')"
+            ).lastrowid
+        assert client.delete(f"/api/digests/{digest_id}").status_code == 204
+        assert client.get(f"/api/digests/{digest_id}").status_code == 404
+
+    def test_delete_unknown_digest_404(self, client: TestClient) -> None:
+        assert client.delete("/api/digests/999999").status_code == 404
+
+
+class TestProviderOverride:
+    def test_preflight_honours_provider_override(self, client: TestClient, tmp_config: Config) -> None:
+        # A provider name with no `providers:` entry falls back to a local
+        # Ollama, same as Config.resolve_task's "I just named it" rule —
+        # so this succeeds and reports the overridden model back.
+        _seed(tmp_config, "read Dune")
+        res = client.post(
+            "/api/digests/preflight",
+            json={
+                "template": "book-titles",
+                "category": "books/manga",
+                "provider": "ollama",
+                "model": "a-different-model",
+            },
+        )
+        assert res.status_code == 200
+        assert res.json()["model"] == "a-different-model"
+
+    def test_create_uses_overridden_provider_and_model(
+        self, client: TestClient, tmp_config: Config
+    ) -> None:
+        i1 = _seed(tmp_config, "read Dune by Herbert")
+
+        provider = AsyncMock()
+        provider.name = "ollama"
+        provider.complete.side_effect = [
+            ChatResult(text=json.dumps([{"title": "Dune", "author": "Herbert", "item_id": i1}])),
+            ChatResult(text=f"## Sci-fi\n- **Dune** — Herbert ([reel](https://x)) [[item:{i1}]]\n"),
+        ]
+
+        with patch("gramvault.ai.digest.build_provider", return_value=provider):
+            res = client.post(
+                "/api/digests",
+                json={
+                    "template": "book-titles",
+                    "category": "books/manga",
+                    "provider": "ollama",
+                    "model": "override-model",
+                },
+            )
+        assert res.status_code == 202
+        digest_id = res.json()["digest_id"]
+
+        digest = client.get(f"/api/digests/{digest_id}").json()
+        assert digest["model"] == "override-model"

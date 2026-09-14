@@ -521,6 +521,13 @@ export function Gallery() {
           <button type="button" className="btn-secondary text-xs" disabled={bulkBusy} onClick={() => void bulkExport()}>
             Export to Obsidian
           </button>
+          <Link
+            className="btn-secondary text-xs no-underline"
+            to="/digest"
+            state={{ itemIds: [...selectedIds] }}
+          >
+            Digest these
+          </Link>
         </div>
       )}
 

@@ -2,12 +2,15 @@
 selection of items via a template (the reels-workflow §D map/reduce step
 as a first-class feature).
 
-    GET  /api/digests/templates        the bundled + user templates
-    POST /api/digests/preflight        item count / token / cost estimate
-    POST /api/digests                  create + run (jobs.kind='digest')
-    GET  /api/digests                  history (newest first, no markdown)
-    GET  /api/digests/{id}             one digest with its markdown + manifest
-    GET  /api/digests/{id}/download    the markdown as a file attachment
+    GET    /api/digests/templates        the bundled + user templates
+    POST   /api/digests/templates        create/overwrite a user template
+    DELETE /api/digests/templates/{name} delete a user template
+    POST   /api/digests/preflight        item count / token / cost estimate
+    POST   /api/digests                  create + run (jobs.kind='digest')
+    GET    /api/digests                  history (newest first, no markdown)
+    GET    /api/digests/{id}             one digest with its markdown + manifest
+    DELETE /api/digests/{id}             delete a digest
+    GET    /api/digests/{id}/download    the markdown as a file attachment
 
 The engine is `gramvault.ai.digest`; this module is scope resolution,
 readiness check, and job wiring.
@@ -20,12 +23,11 @@ import re
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gramvault.ai import digest as digest_engine
 from gramvault.ai.digest import DigestError, Selection
 from gramvault.ai.errors import ProviderNotReadyError
-from gramvault.ai.providers import get_provider
 from gramvault.api import jobs
 from gramvault.api.deps import get_config_dependency
 from gramvault.chat.retrieval import fetch_items
@@ -65,6 +67,10 @@ class SelectionRequest(BaseModel):
 
 class PreflightRequest(SelectionRequest):
     template: str
+    # Per-run override of the template's routed provider/model (UX-7).
+    # Both must be given together — a partial override is ignored.
+    provider: str | None = None
+    model: str | None = None
 
 
 class PreflightResponse(BaseModel):
@@ -125,6 +131,56 @@ async def list_templates(
     ]
 
 
+class TemplateWriteRequest(BaseModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    extract_prompt: str = Field(min_length=1)
+    reduce_prompt: str = Field(min_length=1)
+    default_task: str = "digest"
+    extract_schema: dict | list | None = None
+
+
+@router.post("/templates", response_model=TemplateInfo, status_code=201)
+async def create_or_update_template(
+    body: TemplateWriteRequest,
+    config: Config = Depends(get_config_dependency),
+) -> TemplateInfo:
+    """Create a user template, or overwrite the existing user template of
+    the same name. A name matching a builtin template shadows it (see
+    `load_templates`) rather than erroring."""
+    template = digest_engine.DigestTemplate(
+        name=body.name.strip(),
+        description=body.description.strip(),
+        extract_prompt=body.extract_prompt.strip(),
+        reduce_prompt=body.reduce_prompt.strip(),
+        extract_schema=body.extract_schema,
+        default_task=body.default_task.strip() or "digest",
+    )
+    saved = digest_engine.save_user_template(config, template)
+    return TemplateInfo(
+        name=saved.name,
+        description=saved.description,
+        extract_prompt=saved.extract_prompt,
+        reduce_prompt=saved.reduce_prompt,
+        version=saved.version,
+        source=saved.source,
+        default_task=saved.default_task,
+    )
+
+
+@router.delete("/templates/{name}", status_code=204)
+async def delete_template(
+    name: str,
+    config: Config = Depends(get_config_dependency),
+) -> None:
+    existing = digest_engine.load_templates(config).get(name)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"Template {name!r} not found")
+    if existing.source == "builtin":
+        raise HTTPException(status_code=409, detail="Built-in templates can't be deleted")
+    digest_engine.delete_user_template(config, name)
+
+
 # --- preflight -------------------------------------------------------
 
 
@@ -139,7 +195,9 @@ async def digest_preflight(
     except DigestError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    estimate = await digest_engine.preflight(item_ids, template, config)
+    estimate = await digest_engine.preflight(
+        item_ids, template, config, provider_override=body.provider, model_override=body.model
+    )
     return PreflightResponse(
         item_count=estimate.item_count,
         batches=estimate.batches,
@@ -171,8 +229,12 @@ async def create_digest(
         raise HTTPException(status_code=422, detail="the selection matched no items")
 
     try:
-        provider, model = get_provider(template.default_task, config)
+        provider, model = digest_engine.resolve_provider(
+            template, config, provider_override=body.provider, model_override=body.model
+        )
         await provider.ensure_ready(model)
+    except DigestError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ProviderNotReadyError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -207,6 +269,8 @@ async def create_digest(
                 config,
                 progress_cb=lambda step, total: ctx.progress(step=step, total=total),
                 cancel_check=lambda: ctx.cancelled,
+                provider_override=body.provider,
+                model_override=body.model,
             )
         except Exception as exc:
             with session_scope(config) as conn:
@@ -257,6 +321,18 @@ async def get_digest(
     config: Config = Depends(get_config_dependency),
 ) -> Digest:
     return _load_digest(config, digest_id)
+
+
+@router.delete("/{digest_id}", status_code=204)
+async def delete_digest(
+    digest_id: int,
+    config: Config = Depends(get_config_dependency),
+) -> None:
+    with session_scope(config) as conn:
+        row = conn.execute("SELECT id FROM digests WHERE id = ?", (digest_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Digest {digest_id} not found")
+        conn.execute("DELETE FROM digests WHERE id = ?", (digest_id,))
 
 
 class DigestExportResponse(BaseModel):

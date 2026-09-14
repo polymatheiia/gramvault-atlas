@@ -32,10 +32,11 @@ from typing import Any
 import yaml
 
 from gramvault.ai.document_builder import build_content_document
-from gramvault.ai.providers import get_provider
+from gramvault.ai.providers import build_provider, get_provider
+from gramvault.ai.providers.base import Provider
 from gramvault.chat.prompt import CITATION_MARKER_REGEX
 from gramvault.chat.retrieval import fetch_items, hybrid_search
-from gramvault.config import Config, get_config
+from gramvault.config import Config, ProviderConfig, get_config
 from gramvault.db.session import session_scope
 from gramvault.models.schemas import Item
 
@@ -100,6 +101,11 @@ def _user_templates_dir(config: Config) -> Path:
     return config.resolved_db_path.parent / "digest_templates"
 
 
+def _template_slug(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug or "template"
+
+
 def _parse_template(path: Path, source: str) -> DigestTemplate | None:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -140,6 +146,42 @@ def get_template(name: str, config: Config | None = None) -> DigestTemplate:
     if name not in templates:
         raise DigestError(f"unknown digest template {name!r} (have: {', '.join(sorted(templates))})")
     return templates[name]
+
+
+def save_user_template(config: Config, template: DigestTemplate) -> DigestTemplate:
+    """Write (create or overwrite) a template in `<data>/digest_templates/`.
+    Same-named builtin templates are shadowed, not replaced — see
+    `load_templates`'s precedence rule (UX-7's in-app template editor)."""
+    directory = _user_templates_dir(config)
+    directory.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {
+        "name": template.name,
+        "description": template.description,
+        "extract_prompt": template.extract_prompt,
+        "reduce_prompt": template.reduce_prompt,
+        "default_task": template.default_task,
+        "version": template.version,
+    }
+    if template.extract_schema:
+        data["extract_schema"] = template.extract_schema
+    path = directory / f"{_template_slug(template.name)}.yaml"
+    path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    return DigestTemplate(**{**data, "source": "user", "extract_schema": template.extract_schema})
+
+
+def delete_user_template(config: Config, name: str) -> bool:
+    """Delete a user template by name. Returns False if no user template
+    with that name exists — builtin templates aren't stored here at all,
+    so this can never remove one."""
+    directory = _user_templates_dir(config)
+    if not directory.is_dir():
+        return False
+    for path in sorted(directory.glob("*.yaml")):
+        parsed = _parse_template(path, "user")
+        if parsed and parsed.name == name:
+            path.unlink()
+            return True
+    return False
 
 
 # --- selection ---------------------------------------------------------
@@ -481,8 +523,31 @@ class PreflightEstimate:
     model: str
 
 
+def resolve_provider(
+    template: DigestTemplate,
+    config: Config,
+    *,
+    provider_override: str | None = None,
+    model_override: str | None = None,
+) -> tuple[Provider, str]:
+    """The template's routed (provider, model), unless the caller picked a
+    specific provider/model for this one run (UX-7's per-run model
+    override) — both must be given together, or the override is ignored.
+    A provider name with no `providers:` entry falls back to a local
+    Ollama, matching `Config.resolve_task`'s "I just named it" convention."""
+    if provider_override and model_override:
+        pc = config.providers.get(provider_override) or ProviderConfig(kind="ollama")
+        return build_provider(pc, config), model_override
+    return get_provider(template.default_task, config)
+
+
 async def preflight(
-    item_ids: list[int], template: DigestTemplate, config: Config | None = None
+    item_ids: list[int],
+    template: DigestTemplate,
+    config: Config | None = None,
+    *,
+    provider_override: str | None = None,
+    model_override: str | None = None,
 ) -> PreflightEstimate:
     config = config or get_config()
     with session_scope(config) as conn:
@@ -492,7 +557,9 @@ async def preflight(
     # +reduce: entries are far smaller than the source text; assume ~15%.
     tokens_in = int(tokens_in * 1.15)
     tokens_out = int(tokens_in * 0.25)
-    provider, model = get_provider(template.default_task, config)
+    provider, model = resolve_provider(
+        template, config, provider_override=provider_override, model_override=model_override
+    )
     return PreflightEstimate(
         item_count=len(items),
         batches=len(batches),
@@ -510,6 +577,8 @@ async def run_digest(
     *,
     progress_cb: Callable[[int, int], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    provider_override: str | None = None,
+    model_override: str | None = None,
 ) -> dict[str, Any]:
     """Map/reduce the digest row's item snapshot into Markdown and write it
     back onto the row. Returns a summary (also stored as the job result)."""
@@ -526,7 +595,9 @@ async def run_digest(
 
     items = [items_by_id[i] for i in item_ids if i in items_by_id]
     valid_ids = set(items_by_id)
-    provider, model = get_provider(template.default_task, config)
+    provider, model = resolve_provider(
+        template, config, provider_override=provider_override, model_override=model_override
+    )
     await provider.ensure_ready(model)
 
     with session_scope(config) as conn:

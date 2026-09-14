@@ -866,6 +866,17 @@
             ],
             "title": "Item Ids"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
           "name": {
             "anyOf": [
               {
@@ -876,6 +887,17 @@
               }
             ],
             "title": "Name"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
           },
           "query": {
             "anyOf": [
@@ -2187,6 +2209,28 @@
             ],
             "title": "Item Ids"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
           "query": {
             "anyOf": [
               {
@@ -2956,6 +3000,58 @@
         "title": "TemplateInfo",
         "type": "object"
       },
+      "TemplateWriteRequest": {
+        "properties": {
+          "default_task": {
+            "default": "digest",
+            "title": "Default Task",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "extract_prompt": {
+            "minLength": 1,
+            "title": "Extract Prompt",
+            "type": "string"
+          },
+          "extract_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extract Schema"
+          },
+          "name": {
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "reduce_prompt": {
+            "minLength": 1,
+            "title": "Reduce Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "extract_prompt",
+          "reduce_prompt"
+        ],
+        "title": "TemplateWriteRequest",
+        "type": "object"
+      },
       "TestTaskRequest": {
         "properties": {
           "task": {
@@ -3694,9 +3790,117 @@
         "tags": [
           "digests"
         ]
+      },
+      "post": {
+        "description": "Create a user template, or overwrite the existing user template of\nthe same name. A name matching a builtin template shadows it (see\n`load_templates`) rather than erroring.",
+        "operationId": "create_or_update_template_api_digests_templates_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TemplateWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TemplateInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Or Update Template",
+        "tags": [
+          "digests"
+        ]
+      }
+    },
+    "/api/digests/templates/{name}": {
+      "delete": {
+        "operationId": "delete_template_api_digests_templates__name__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Template",
+        "tags": [
+          "digests"
+        ]
       }
     },
     "/api/digests/{digest_id}": {
+      "delete": {
+        "operationId": "delete_digest_api_digests__digest_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "digest_id",
+            "required": true,
+            "schema": {
+              "title": "Digest Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Digest",
+        "tags": [
+          "digests"
+        ]
+      },
       "get": {
         "operationId": "get_digest_api_digests__digest_id__get",
         "parameters": [
