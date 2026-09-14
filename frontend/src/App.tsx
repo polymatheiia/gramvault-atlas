@@ -1,6 +1,9 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import { AuthGate } from './components/AuthGate'
+import { JobStrip } from './components/JobStrip'
 import { NavBar } from './components/NavBar'
+import { ToastProvider } from './lib/toast'
+import { JobsProvider } from './lib/useJobs'
 import { Categorize } from './pages/Categorize'
 import { Chat } from './pages/Chat'
 import { Digest } from './pages/Digest'
@@ -20,24 +23,29 @@ function App() {
   return (
     <BrowserRouter>
       <AuthGate>
-        <div className="min-h-screen bg-surface text-slate-100">
-          <NavBar />
-          <main>
-            <Routes>
-              <Route path="/" element={<Gallery />} />
-              <Route path="/feed" element={<Feed />} />
-              <Route path="/items/:id" element={<ItemDetail />} />
-              <Route path="/chat" element={<Chat />} />
-              <Route path="/import" element={<Import />} />
-              <Route path="/pull" element={<Pull />} />
-              <Route path="/enrich" element={<Enrich />} />
-              <Route path="/categorize" element={<Categorize />} />
-              <Route path="/digest" element={<Digest />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </main>
-        </div>
+        <ToastProvider>
+          <JobsProvider>
+            <div className="min-h-screen bg-surface text-slate-100">
+              <NavBar />
+              <JobStrip />
+              <main>
+                <Routes>
+                  <Route path="/" element={<Gallery />} />
+                  <Route path="/feed" element={<Feed />} />
+                  <Route path="/items/:id" element={<ItemDetail />} />
+                  <Route path="/chat" element={<Chat />} />
+                  <Route path="/import" element={<Import />} />
+                  <Route path="/pull" element={<Pull />} />
+                  <Route path="/enrich" element={<Enrich />} />
+                  <Route path="/categorize" element={<Categorize />} />
+                  <Route path="/digest" element={<Digest />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </main>
+            </div>
+          </JobsProvider>
+        </ToastProvider>
       </AuthGate>
     </BrowserRouter>
   )
