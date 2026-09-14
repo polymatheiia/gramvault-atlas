@@ -130,7 +130,7 @@ def _get_or_create_author(
 
 def _attach_hashtags(conn: sqlite3.Connection, item_id: int, hashtags: list[str]) -> None:
     """Record the export's hashtags as `kind='hashtag'` tags, keeping them
-    distinct from 'auto' (A3 enrichment) and 'manual' (user-entered) so
+    distinct from 'auto' (AI-pipeline enrichment) and 'manual' (user-entered) so
     each source stays attributable."""
     for name in hashtags:
         conn.execute("INSERT OR IGNORE INTO tags (name, kind) VALUES (?, 'hashtag')", (name,))

@@ -1,6 +1,6 @@
-"""Smoke tests for the scaffold itself: package imports, app creation, the
-health check, DB schema application, and that every stub route is wired
-up correctly (returns 501 rather than 404) so A2-A6 can build on them.
+"""Smoke tests: package imports, app creation, the health check, DB schema
+application, and that every feature router is actually mounted (its
+routes don't 404).
 """
 
 from __future__ import annotations
@@ -54,10 +54,10 @@ def test_session_scope_context_manager(tmp_config: Config) -> None:
 
 
 def test_routers_are_mounted(client: TestClient) -> None:
-    # All five feature routers (A2 import/library, A3 enrich, A4 chat,
-    # A6 export) are now fully implemented — see their dedicated
-    # test_routes_*.py files for real behavior coverage. This just proves
-    # each router is mounted (i.e. none of these paths 404).
+    # All five feature routers (import/library, enrich, chat, export) are
+    # fully implemented — see their dedicated test_routes_*.py files for
+    # real behavior coverage. This just proves each router is mounted
+    # (i.e. none of these paths 404).
     assert client.get("/api/import/jobs").status_code != 404
     assert client.get("/api/library/items").status_code != 404
     assert client.get("/api/enrich/progress").status_code != 404

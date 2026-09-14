@@ -1,10 +1,9 @@
 """Shared pytest fixtures for GramVault's backend test suite.
 
 pytest auto-discovers this conftest.py, so `tmp_config`, `tmp_db_conn`,
-and `client` are available to any test under backend/tests/ (and to
-A2-A6's own test modules once they add them here) without an import.
-Add feature-specific fixtures in your own test files; only put things
-here that are genuinely shared across feature areas.
+and `client` are available to any test under backend/tests/ without an
+import. Add feature-specific fixtures in your own test files; only put
+things here that are genuinely shared across feature areas.
 """
 
 from __future__ import annotations

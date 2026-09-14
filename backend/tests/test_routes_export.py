@@ -51,8 +51,9 @@ def export_client(export_config: Config) -> Iterator[TestClient]:
 
 
 def _seed_one_item(config: Config) -> int:
-    """Insert a minimal author + item directly via SQL (not through A2's
-    still-stubbed import pipeline) and return the new item's id."""
+    """Insert a minimal author + item directly via SQL (bypassing the
+    import pipeline, which needs a real export ZIP) and return the new
+    item's id."""
     with session_scope(config) as conn:
         author_id = conn.execute(
             "INSERT INTO authors (username) VALUES (?)", ("test-author",)

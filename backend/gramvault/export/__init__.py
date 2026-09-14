@@ -13,8 +13,8 @@ Modules:
     overview_builder   — render "GramVault Dashboard.md" (library stats).
     poster             — grab a still poster frame for a video note (§G6).
     repository        — load Item/MediaFile/Author/Tag rows out of the
-        shared SQLite DB for export (read-only; A6 does not write to
-        items/media_files/tags).
+        shared SQLite DB for export (read-only; the exporter never writes
+        to items/media_files/tags).
     exporter           — orchestrates the above: resolves/validates the
         vault path, writes notes + copies media idempotently keyed off
         each item's stable `gramvault_id` (== Item.id), writes the index.

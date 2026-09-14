@@ -235,7 +235,7 @@ def _guess_media_type_from_url(href: str | None) -> MediaType:
     if href and ("/reel/" in href or "/reels/" in href):
         return MediaType.REEL
     # The saved-posts export alone can't disambiguate photo/video/carousel
-    # for someone else's post — PHOTO is the best-effort default; A3's
+    # for someone else's post — PHOTO is the best-effort default; the
     # enrichment pass (or a later re-check against the real media) can
     # correct this.
     return MediaType.PHOTO

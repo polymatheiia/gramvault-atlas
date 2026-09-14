@@ -1,5 +1,5 @@
 """Tests for gramvault.export.markdown_builder: frontmatter correctness,
-filename sanitization/stability, and body rendering with partial A3
+filename sanitization/stability, and body rendering with partial
 enrichment data (transcript/vision_caption may be None)."""
 
 from __future__ import annotations
@@ -171,7 +171,7 @@ class TestBuildNoteMarkdown:
         assert "No caption" in build_note_markdown(item)
 
     def test_transcript_and_vision_caption_optional(self) -> None:
-        # A3 may not have finished enrichment — both fields None should
+        # Enrichment may not have finished — both fields None should
         # not raise and should not fabricate sections.
         item = _make_item(
             media_files=[

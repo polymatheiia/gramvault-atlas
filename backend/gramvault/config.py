@@ -60,9 +60,8 @@ class PathsConfig(BaseModel):
 
 
 class ModelsConfig(BaseModel):
-    """Ollama model names, referenced by name only. Nothing in this
-    scaffold calls these models — see Agents A3 (AI pipeline) and A4
-    (chat) for the actual Ollama client calls."""
+    """Ollama model names, referenced by name only — the actual Ollama
+    client calls live in `gramvault.ai` (AI pipeline) and `gramvault.chat`."""
 
     chat_model: str = "llama3.1:8b"
     vision_model: str = "llava:7b"

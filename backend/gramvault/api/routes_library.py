@@ -561,7 +561,7 @@ async def update_item_tags(
     """Replace an item's manually-assigned tags.
 
     Decision: only tags of kind='manual' are replaced by this endpoint —
-    auto-generated tags (from A3's AI pipeline) and hashtag tags (parsed
+    auto-generated tags (from the AI pipeline) and hashtag tags (parsed
     from captions) are left untouched, since a user editing "their" tags
     shouldn't accidentally wipe out AI-generated ones. Any name in
     `body.tags` that doesn't already exist as a tag is created as

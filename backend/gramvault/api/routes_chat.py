@@ -110,7 +110,7 @@ async def send_chat_message(
 
     Citations are inline `[[item:<item_id>]]` markers in the streamed
     `content` — see `gramvault.chat.prompt` for the exact format contract
-    (frontend/A5 parses these into clickable chips).
+    (the frontend parses these into clickable chips).
 
     404 if the session doesn't exist; 503 (before any streaming begins) if
     Ollama isn't running or the required models aren't pulled.

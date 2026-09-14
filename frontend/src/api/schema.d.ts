@@ -124,7 +124,7 @@ export interface paths {
          *
          *     Citations are inline `[[item:<item_id>]]` markers in the streamed
          *     `content` — see `gramvault.chat.prompt` for the exact format contract
-         *     (frontend/A5 parses these into clickable chips).
+         *     (the frontend parses these into clickable chips).
          *
          *     404 if the session doesn't exist; 503 (before any streaming begins) if
          *     Ollama isn't running or the required models aren't pulled.
@@ -809,7 +809,7 @@ export interface paths {
          * @description Replace an item's manually-assigned tags.
          *
          *     Decision: only tags of kind='manual' are replaced by this endpoint —
-         *     auto-generated tags (from A3's AI pipeline) and hashtag tags (parsed
+         *     auto-generated tags (from the AI pipeline) and hashtag tags (parsed
          *     from captions) are left untouched, since a user editing "their" tags
          *     shouldn't accidentally wipe out AI-generated ones. Any name in
          *     `body.tags` that doesn't already exist as a tag is created as
