@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -159,12 +160,15 @@ def _item_filter_sql(
     needs_review: bool,
     date_from: datetime | None,
     date_to: datetime | None,
-) -> tuple[str, str, list[object]]:
-    """Shared gallery filter → `(joins, where_sql, params)`. Used by the
-    paginated listing and the id-only listing so both stay in lockstep."""
+) -> tuple[str, str, list[object], bool]:
+    """Shared gallery filter → `(joins, where_sql, params, used_fts)`. Used
+    by the paginated listing and the id-only listing so both stay in
+    lockstep. `used_fts` tells the caller whether `items_fts` (and so
+    `bm25(items_fts)`) is actually in scope, for `sort=relevance`."""
     clauses: list[str] = []
     params: list[object] = []
     joins: list[str] = []
+    used_fts = False
 
     if author:
         clauses.append("authors.username = ?")
@@ -204,6 +208,7 @@ def _item_filter_sql(
             joins.append("JOIN items_fts ON items_fts.rowid = items.id")
             clauses.append("items_fts MATCH ?")
             params.append(match_expr)
+            used_fts = True
         else:
             clauses.append("items.caption LIKE ?")
             params.append(f"%{q}%")
@@ -227,10 +232,27 @@ def _item_filter_sql(
         params.append(tag)
 
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    return " ".join(joins), where_sql, params
+    return " ".join(joins), where_sql, params, used_fts
 
+
+ItemSort = Literal["saved_date", "posted_date", "author", "relevance"]
 
 _ITEM_ORDER = "ORDER BY items.imported_at DESC, items.id DESC"
+
+
+def _order_sql(sort: ItemSort, used_fts: bool) -> str:
+    """`relevance` needs `bm25(items_fts)` (lower = more relevant) in
+    scope, which only happens when `q` actually matched via FTS (see
+    `_item_filter_sql`'s `used_fts`) — silently fall back to the default
+    rather than erroring on a query with no FTS join for it to reference,
+    e.g. `sort=relevance` with no `q` at all."""
+    if sort == "relevance" and used_fts:
+        return "ORDER BY bm25(items_fts) ASC, items.id DESC"
+    if sort == "posted_date":
+        return "ORDER BY items.taken_at DESC, items.id DESC"
+    if sort == "author":
+        return "ORDER BY authors.username ASC, items.id DESC"
+    return _ITEM_ORDER
 
 
 @router.get("/items", response_model=ItemListResponse)
@@ -254,6 +276,10 @@ async def list_items(
     ),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
+    sort: ItemSort = Query(
+        default="saved_date",
+        description="'relevance' falls back to 'saved_date' when there's no q= to rank against",
+    ),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     config: Config = Depends(get_config_dependency),
@@ -270,7 +296,7 @@ async def list_items(
         )
 
     with session_scope(config) as conn:
-        joins, where_sql, params = _item_filter_sql(
+        joins, where_sql, params, used_fts = _item_filter_sql(
             conn,
             author=author,
             media_type=media_type,
@@ -281,6 +307,7 @@ async def list_items(
             date_from=date_from,
             date_to=date_to,
         )
+        order_sql = _order_sql(sort, used_fts)
         total_row = conn.execute(
             f"SELECT COUNT(DISTINCT items.id) AS c FROM items "
             f"LEFT JOIN authors ON authors.id = items.author_id {joins} {where_sql}",
@@ -294,7 +321,7 @@ async def list_items(
             for row in conn.execute(
                 f"SELECT DISTINCT items.id AS id FROM items "
                 f"LEFT JOIN authors ON authors.id = items.author_id {joins} {where_sql} "
-                f"{_ITEM_ORDER} LIMIT ? OFFSET ?",
+                f"{order_sql} LIMIT ? OFFSET ?",
                 [*params, page_size, offset],
             ).fetchall()
         ]
@@ -333,6 +360,7 @@ async def list_item_ids(
     needs_review: bool = Query(default=False),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
+    sort: ItemSort = Query(default="saved_date"),
     limit: int = Query(default=5000, ge=1, le=20000),
     config: Config = Depends(get_config_dependency),
 ) -> ItemIdListResponse:
@@ -340,7 +368,7 @@ async def list_item_ids(
     `/items`). Powers the reels-style feed and prev/next navigation
     without shipping every item's full payload."""
     with session_scope(config) as conn:
-        joins, where_sql, params = _item_filter_sql(
+        joins, where_sql, params, used_fts = _item_filter_sql(
             conn,
             author=author,
             media_type=media_type,
@@ -351,10 +379,11 @@ async def list_item_ids(
             date_from=date_from,
             date_to=date_to,
         )
+        order_sql = _order_sql(sort, used_fts)
         rows = conn.execute(
             f"SELECT DISTINCT items.id AS id FROM items "
             f"LEFT JOIN authors ON authors.id = items.author_id {joins} {where_sql} "
-            f"{_ITEM_ORDER} LIMIT ?",
+            f"{order_sql} LIMIT ?",
             [*params, limit],
         ).fetchall()
     ids = [row["id"] for row in rows]

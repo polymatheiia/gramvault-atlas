@@ -26,6 +26,10 @@ describe('filterSearch', () => {
   it('carries the search mode alongside search', () => {
     expect(filterSearch(new URLSearchParams('search=pasta&mode=keyword'))).toBe('?search=pasta&mode=keyword')
   })
+
+  it('carries sort too', () => {
+    expect(filterSearch(new URLSearchParams('sort=author'))).toBe('?sort=author')
+  })
 })
 
 describe('fetchSiblingIds', () => {
@@ -102,7 +106,7 @@ describe('fetchSiblingIds', () => {
 
     expect(api.get).toHaveBeenCalledWith(
       '/api/library/item-ids',
-      { author: 'alice', q: 'pasta' },
+      { author: 'alice', q: 'pasta', sort: 'saved_date' },
       undefined,
     )
     expect(ids).toEqual([5])
@@ -115,9 +119,21 @@ describe('fetchSiblingIds', () => {
 
     expect(api.get).toHaveBeenCalledWith(
       '/api/library/item-ids',
-      { author: 'alice', tag: 'travel' },
+      { author: 'alice', tag: 'travel', sort: 'saved_date' },
       undefined,
     )
     expect(ids).toEqual([3, 4])
+  })
+
+  it('forwards an explicit sort for browse mode', async () => {
+    vi.mocked(api.get).mockResolvedValue({ ids: [1], total: 1 })
+
+    await fetchSiblingIds(new URLSearchParams('sort=author'))
+
+    expect(api.get).toHaveBeenCalledWith(
+      '/api/library/item-ids',
+      { sort: 'author' },
+      undefined,
+    )
   })
 })

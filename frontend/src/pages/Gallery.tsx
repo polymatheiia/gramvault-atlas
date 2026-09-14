@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, isNotImplemented } from '../api/client'
 import { ItemCard } from '../components/ItemCard'
-import { filterSearch, searchModeOf, UNCATEGORIZED, type SearchMode } from '../lib/gallery'
+import { filterSearch, itemSortOf, searchModeOf, UNCATEGORIZED, type SearchMode } from '../lib/gallery'
 import { useToast } from '../lib/toast'
 import type {
   Author,
@@ -48,6 +48,7 @@ export function Gallery() {
   const dateTo = searchParams.get('date_to') ?? ''
   const search = searchParams.get('search') ?? ''
   const mode = searchModeOf(searchParams)
+  const sort = itemSortOf(searchParams)
 
   const [searchInput, setSearchInput] = useState(search)
   const [authors, setAuthors] = useState<Author[]>([])
@@ -163,6 +164,7 @@ export function Gallery() {
             date_from: dateFrom || undefined,
             date_to: dateTo || undefined,
             q: search || undefined,
+            sort,
             page: pageNum,
             page_size: PAGE_SIZE,
           },
@@ -201,7 +203,7 @@ export function Gallery() {
     void runQuery({ replace: true, page: 1, topK: PAGE_SIZE, signal: controller.signal })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [author, mediaType, tag, category, dateFrom, dateTo, search, mode])
+  }, [author, mediaType, tag, category, dateFrom, dateTo, search, mode, sort])
 
   function loadMore() {
     if (search && mode === 'semantic') {
@@ -231,7 +233,7 @@ export function Gallery() {
     })
   }
 
-  const hasFilters = !!(author || mediaType || tag || category || dateFrom || dateTo || search)
+  const hasFilters = !!(author || mediaType || tag || category || dateFrom || dateTo || search || sort !== 'saved_date')
 
   function toggleSelect(index: number, item: Item, shiftKey: boolean) {
     if (item.id == null) return
@@ -447,6 +449,18 @@ export function Gallery() {
             value={dateTo}
             onChange={(e) => updateFilter('date_to', e.target.value)}
           />
+          <select
+            className="input w-auto"
+            value={sort}
+            disabled={!!search && mode === 'semantic'}
+            title={search && mode === 'semantic' ? 'Semantic search is already ordered by relevance' : 'Sort'}
+            onChange={(e) => updateFilter('sort', e.target.value === 'saved_date' ? '' : e.target.value)}
+          >
+            <option value="saved_date">Sort: date saved</option>
+            <option value="posted_date">Sort: date posted</option>
+            <option value="author">Sort: author</option>
+            {search && <option value="relevance">Sort: relevance</option>}
+          </select>
           {hasFilters && (
             <button type="button" className="btn-ghost" onClick={() => setSearchParams({})}>
               Clear filters

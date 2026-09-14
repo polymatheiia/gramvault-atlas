@@ -8,16 +8,25 @@ type SemanticSearchResponse = Schemas['SemanticSearchResponse']
 /** Gallery filter params that Gallery / Feed / ItemDetail all share. The
  * gallery's own `page` is deliberately excluded — Feed and prev/next span
  * the whole filtered set. `mode` picks semantic vs keyword search and only
- * matters alongside `search`, but travels with the other filters so a
- * shared link reproduces the same result set. */
-const FILTER_KEYS = ['author', 'media_type', 'tag', 'category', 'date_from', 'date_to', 'search', 'mode'] as const
+ * matters alongside `search`; `sort` only applies outside semantic search
+ * (which is already ordered by relevance) — both travel with the other
+ * filters so a shared link reproduces the same result set. */
+const FILTER_KEYS = [
+  'author', 'media_type', 'tag', 'category', 'date_from', 'date_to', 'search', 'mode', 'sort',
+] as const
 
 export const UNCATEGORIZED = '__uncategorized__'
 
 export type SearchMode = 'semantic' | 'keyword'
+export type ItemSort = 'saved_date' | 'posted_date' | 'author' | 'relevance'
 
 export function searchModeOf(params: URLSearchParams): SearchMode {
   return params.get('mode') === 'keyword' ? 'keyword' : 'semantic'
+}
+
+export function itemSortOf(params: URLSearchParams): ItemSort {
+  const value = params.get('sort')
+  return value === 'posted_date' || value === 'author' || value === 'relevance' ? value : 'saved_date'
 }
 
 /** The filter portion of a URLSearchParams as a `?a=b&c=d` string (empty
@@ -77,7 +86,7 @@ export async function fetchSiblingIds(
 
   const res = await api.get<ItemIdListResponse>(
     '/api/library/item-ids',
-    { ...facetParams(params), ...(search ? { q: search } : {}) },
+    { ...facetParams(params), ...(search ? { q: search } : {}), sort: itemSortOf(params) },
     signal,
   )
   return res.ids

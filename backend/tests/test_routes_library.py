@@ -470,3 +470,80 @@ def test_similar_items_excludes_self_and_orders_by_score(
     assert resp.status_code == 200
     body = resp.json()
     assert [item["id"] for item in body] == [ids["item2_id"]]
+
+
+def test_sort_default_is_saved_date_newest_first(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_library(tmp_config)
+    resp = client.get("/api/library/items")
+    assert [i["id"] for i in resp.json()["items"]] == [ids["item2_id"], ids["item1_id"]]
+
+
+def test_sort_posted_date_orders_by_taken_at_not_import_order(
+    client: TestClient, tmp_config: Config
+) -> None:
+    with session_scope(tmp_config) as conn:
+        # Inserted (and so imported) first, but taken far in the future —
+        # saved_date and posted_date must disagree on the order for this
+        # pair, or the test can't tell the two sort modes apart.
+        conn.execute(
+            "INSERT INTO items (external_id, media_type, taken_at) "
+            "VALUES ('future', 'photo', '2030-01-01T00:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO items (external_id, media_type, taken_at) "
+            "VALUES ('past', 'photo', '2020-01-01T00:00:00')"
+        )
+
+    saved_date = client.get("/api/library/items").json()
+    assert [i["external_id"] for i in saved_date["items"]] == ["past", "future"]
+
+    posted_date = client.get("/api/library/items", params={"sort": "posted_date"}).json()
+    assert [i["external_id"] for i in posted_date["items"]] == ["future", "past"]
+
+
+def test_sort_author_orders_alphabetically_by_username(
+    client: TestClient, tmp_config: Config
+) -> None:
+    ids = _seed_library(tmp_config)  # alice -> item-1, bob -> item-2
+
+    resp = client.get("/api/library/items", params={"sort": "author"})
+
+    assert [i["id"] for i in resp.json()["items"]] == [ids["item1_id"], ids["item2_id"]]
+
+
+def test_sort_relevance_ranks_stronger_fts_matches_first(
+    client: TestClient, tmp_config: Config
+) -> None:
+    with session_scope(tmp_config) as conn:
+        conn.execute(
+            "INSERT INTO items (external_id, media_type, caption) "
+            "VALUES ('weak', 'photo', 'pasta mentioned once here')"
+        )
+        conn.execute(
+            "INSERT INTO items (external_id, media_type, caption) "
+            "VALUES ('strong', 'photo', 'pasta pasta pasta recipe')"
+        )
+
+    resp = client.get("/api/library/items", params={"q": "pasta", "sort": "relevance"})
+
+    assert [i["external_id"] for i in resp.json()["items"]] == ["strong", "weak"]
+
+
+def test_sort_relevance_without_q_falls_back_to_saved_date(
+    client: TestClient, tmp_config: Config
+) -> None:
+    ids = _seed_library(tmp_config)
+
+    resp = client.get("/api/library/items", params={"sort": "relevance"})
+
+    assert [i["id"] for i in resp.json()["items"]] == [ids["item2_id"], ids["item1_id"]]
+
+
+def test_item_ids_accepts_sort_too_and_matches_items_order(
+    client: TestClient, tmp_config: Config
+) -> None:
+    ids = _seed_library(tmp_config)
+
+    resp = client.get("/api/library/item-ids", params={"sort": "author"})
+
+    assert resp.json()["ids"] == [ids["item1_id"], ids["item2_id"]]

@@ -4806,6 +4806,22 @@
           },
           {
             "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "saved_date",
+              "enum": [
+                "saved_date",
+                "posted_date",
+                "author",
+                "relevance"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -5002,6 +5018,24 @@
                 }
               ],
               "title": "Date To"
+            }
+          },
+          {
+            "description": "'relevance' falls back to 'saved_date' when there's no q= to rank against",
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "saved_date",
+              "description": "'relevance' falls back to 'saved_date' when there's no q= to rank against",
+              "enum": [
+                "saved_date",
+                "posted_date",
+                "author",
+                "relevance"
+              ],
+              "title": "Sort",
+              "type": "string"
             }
           },
           {

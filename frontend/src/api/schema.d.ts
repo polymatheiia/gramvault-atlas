@@ -3334,6 +3334,7 @@ export interface operations {
                 needs_review?: boolean;
                 date_from?: string | null;
                 date_to?: string | null;
+                sort?: "saved_date" | "posted_date" | "author" | "relevance";
                 limit?: number;
             };
             header?: never;
@@ -3381,6 +3382,8 @@ export interface operations {
                 needs_review?: boolean;
                 date_from?: string | null;
                 date_to?: string | null;
+                /** @description 'relevance' falls back to 'saved_date' when there's no q= to rank against */
+                sort?: "saved_date" | "posted_date" | "author" | "relevance";
                 page?: number;
                 page_size?: number;
             };
