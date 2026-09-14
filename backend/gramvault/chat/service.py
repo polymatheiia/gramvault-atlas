@@ -9,6 +9,7 @@ retrieval/prompt split already in this package).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sqlite3
@@ -155,6 +156,17 @@ async def stream_message(
     Opens and owns its own SQLite connection for the lifetime of the
     stream (a route handler can't hold a `with session_scope()` block open
     across the deferred consumption of a streaming response).
+
+    Two durability guarantees (R7), both worth stating because neither is
+    obvious from the happy path below:
+    - The user's turn is only persisted once retrieval has actually
+      succeeded, so a retrieval failure (embedding provider down, a DB
+      error) never leaves a dangling question with no reply in the
+      session's history.
+    - If the client disconnects mid-stream, whatever assistant text has
+      arrived so far is still persisted (the `finally` below runs during
+      `GeneratorExit` propagation, same as on normal completion) instead
+      of being silently lost.
     """
     config = config or get_config()
     conn = get_connection(config)
@@ -163,24 +175,45 @@ async def stream_message(
         history = [
             {"role": str(m.role), "content": m.content} for m in list_messages(conn, session_id)
         ]
-        _persist_message(conn, session_id, ChatRole.USER, user_content)
 
         results = await retrieval.hybrid_search(conn, user_content, top_k=top_k, config=config)
         items = retrieval.fetch_items(conn, [r.item_id for r in results])
         valid_item_ids = set(items.keys())
 
+        _persist_message(conn, session_id, ChatRole.USER, user_content)
+
         messages = prompt.build_messages(history, items, results, user_content)
 
         chat_provider, chat_model = get_provider("chat", config)
         full_text = ""
-        async for chunk in chat_provider.stream_chat(chat_model, messages):
-            full_text += chunk
-            yield {"event": "token", "data": json.dumps({"content": chunk})}
+        assistant_message_id: int | None = None
+        stream_completed = False
+        try:
+            async for chunk in chat_provider.stream_chat(chat_model, messages):
+                full_text += chunk
+                yield {"event": "token", "data": json.dumps({"content": chunk})}
+            stream_completed = True
+        finally:
+            # Normal completion always persists (even an empty reply, to
+            # match prior behaviour); an abnormal exit (disconnect, a
+            # mid-stream provider error) only persists if something was
+            # actually generated, so a same-request provider failure with
+            # zero tokens still surfaces as a plain error event below with
+            # no phantom empty assistant row.
+            if assistant_message_id is None and (stream_completed or full_text):
+                # This can run while a GeneratorExit (client disconnect) is
+                # propagating through this finally — a DB error here must
+                # not replace it, or aclose() surfaces a RuntimeError to
+                # the SSE layer instead of the partial save just being
+                # best-effort.
+                with contextlib.suppress(sqlite3.Error):
+                    assistant_message_id = _persist_message(
+                        conn, session_id, ChatRole.ASSISTANT, full_text
+                    )
 
         citation_item_ids = parse_citations(full_text, valid_item_ids)
         results_by_id = {r.item_id: r for r in results}
 
-        assistant_message_id = _persist_message(conn, session_id, ChatRole.ASSISTANT, full_text)
         citations_payload: list[dict[str, Any]] = []
         for item_id in citation_item_ids:
             result = results_by_id.get(item_id)

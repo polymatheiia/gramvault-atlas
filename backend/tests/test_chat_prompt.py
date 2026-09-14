@@ -99,3 +99,39 @@ class TestBuildMessages:
         assert "Item 7" in messages[-1]["content"]
         assert "a specific recipe" in messages[-1]["content"]
         assert "any recipes?" in messages[-1]["content"]
+
+    def test_history_windowed_to_budget_keeps_most_recent_turns(self) -> None:
+        # R4: a long session must not resend everything — old turns fall
+        # off once the budget is exhausted, most recent kept.
+        history = [
+            {"role": "user", "content": "old question " * 200},
+            {"role": "assistant", "content": "old answer " * 200},
+            {"role": "user", "content": "recent question"},
+            {"role": "assistant", "content": "recent answer"},
+        ]
+
+        messages = prompt.build_messages(history, {}, [], "latest?", budget_tokens=50)
+
+        kept = messages[1:-1]
+        assert {"role": "user", "content": "recent question"} in kept
+        assert {"role": "assistant", "content": "recent answer"} in kept
+        assert not any("old question" in m["content"] for m in kept)
+
+    def test_history_budget_is_independent_of_a_large_context_block(self) -> None:
+        # A normal-sized retrieved-context block must not silently zero out
+        # history by sharing a budget with it — history gets its own pool.
+        items = {i: _make_item(i, caption="x " * 200) for i in range(6)}
+        results = [RetrievalResult(item_id=i, score=0.5) for i in items]
+        history = [{"role": "user", "content": "a short recent question"}]
+
+        messages = prompt.build_messages(history, items, results, "latest?")
+
+        assert history[0] in messages[1:-1]
+
+    def test_default_budget_keeps_history_with_no_retrieved_context(self) -> None:
+        history = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello there"},
+        ]
+        messages = prompt.build_messages(history, {}, [], "what did I save?")
+        assert messages[1:3] == history

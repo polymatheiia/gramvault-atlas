@@ -31,6 +31,22 @@ from gramvault.models.schemas import Item
 
 CITATION_MARKER_REGEX = r"\[\[item:(\d+)\]\]"
 
+# ~chars per token (matching ai/classifier.py's / ai/digest.py's cheap
+# estimate — chat has no provider in the loop yet to report exact counts).
+_CHARS_PER_TOKEN = 4
+# R4: history used to be resent in full every turn; a long session could
+# silently push the *system prompt* out of a small local model's context
+# (Ollama truncates from the front). Keep the most recent turns that fit
+# this budget instead — past turns already carry only the raw question/
+# answer text (build_messages attaches the retrieved-context block to the
+# *current* turn only), so this budget is genuinely just conversation, not
+# stale context blocks piling up.
+_HISTORY_BUDGET_TOKENS = 3000
+
+
+def estimate_tokens(text: str) -> int:
+    return max(1, len(text) // _CHARS_PER_TOKEN)
+
 SYSTEM_INSTRUCTION = """You are GramVault's assistant: a private, local search \
 companion over the user's saved Instagram posts, reels, and carousels.
 
@@ -106,21 +122,43 @@ def build_messages(
     items: dict[int, Item],
     results: list[RetrievalResult],
     user_message: str,
+    *,
+    budget_tokens: int = _HISTORY_BUDGET_TOKENS,
 ) -> list[dict[str, str]]:
     """Build the full `messages` list for a provider's `stream_chat()`:
-    system instruction, prior turns (`history`, oldest first, each a
-    `{"role", "content"}` dict), then a final user turn that bundles the
-    retrieved-item context with the new user message.
+    system instruction, as much recent history as fits `budget_tokens`
+    (R4), then a final user turn that bundles the retrieved-item context
+    with the new user message.
 
     Context is attached to the *latest* user turn (rather than as a
     separate system message) so it stays naturally scoped to "what's
     relevant to answer this question," and doesn't grow stale/duplicated
     across a long conversation.
+
+    History is windowed from the most recent turn backwards, keeping
+    whole turns until the next one wouldn't fit `budget_tokens` on its
+    own — deliberately *not* shared with the system instruction or the
+    current turn's context block, both of which are already required
+    per-turn and can't be trimmed. A shared pool would mean a normal-sized
+    retrieved-context block (a handful of items' captions/transcripts can
+    already be several hundred tokens) silently zeroed out history on
+    every single turn; a dedicated budget means history windowing only
+    ever kicks in on a long-running session, which is the actual target.
     """
     context_block = build_context_block(items, results)
     final_user_content = f"{context_block}\n\nUser question: {user_message}"
 
+    used = 0
+    kept: list[dict[str, str]] = []
+    for message in reversed(history):
+        cost = estimate_tokens(message["content"])
+        if used + cost > budget_tokens:
+            break
+        kept.append(message)
+        used += cost
+    kept.reverse()
+
     messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_INSTRUCTION}]
-    messages.extend(history)
+    messages.extend(kept)
     messages.append({"role": "user", "content": final_user_content})
     return messages

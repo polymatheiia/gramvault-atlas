@@ -180,6 +180,72 @@ class TestStreamMessage:
         assert messages[1].citations[0].item_id == 1
 
     @pytest.mark.anyio
+    async def test_disconnect_mid_stream_persists_partial_reply(
+        self, tmp_config: Config
+    ) -> None:
+        """R7: a client disconnect (the SSE layer calling aclose() on the
+        generator) must not lose the assistant text streamed so far, and
+        must not itself raise (a swallowed exception inside the `finally`
+        would surface as a RuntimeError from aclose())."""
+        from gramvault.db.session import get_connection, init_db
+
+        conn = get_connection(tmp_config)
+        init_db(conn)
+        session = service.create_session(conn, title="test")
+        conn.close()
+
+        with (
+            patch.object(
+                service.retrieval, "hybrid_search", new_callable=AsyncMock, return_value=[]
+            ),
+            patch.object(service.retrieval, "fetch_items", return_value={}),
+            patch("gramvault.ai.ollama_client.stream_chat", new=_fake_stream_chat),
+        ):
+            gen = service.stream_message(session.id, "any pasta?", config=tmp_config)
+            first = await gen.__anext__()
+            assert first["event"] == "token"
+            await gen.aclose()  # simulates the client going away mid-stream
+
+        conn = get_connection(tmp_config)
+        messages = service.list_messages(conn, session.id)
+        conn.close()
+
+        assert [m.role for m in messages] == [ChatRole.USER, ChatRole.ASSISTANT]
+        # Only the first chunk had been yielded before aclose(); that's all
+        # that should have been persisted.
+        assert messages[1].content == "Sure — "
+
+    @pytest.mark.anyio
+    async def test_retrieval_failure_leaves_no_dangling_user_message(
+        self, tmp_config: Config
+    ) -> None:
+        """R7: a retrieval error must not persist the user's turn — no
+        question with a guaranteed-missing reply left in history."""
+        from gramvault.db.session import get_connection, init_db
+
+        conn = get_connection(tmp_config)
+        init_db(conn)
+        session = service.create_session(conn, title="test")
+        conn.close()
+
+        with (
+            patch.object(
+                service.retrieval,
+                "hybrid_search",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("chroma is on fire"),
+            ),
+            pytest.raises(RuntimeError, match="chroma is on fire"),
+        ):
+            async for _ in service.stream_message(session.id, "any pasta?", config=tmp_config):
+                pass
+
+        conn = get_connection(tmp_config)
+        messages = service.list_messages(conn, session.id)
+        conn.close()
+        assert messages == []
+
+    @pytest.mark.anyio
     async def test_ollama_not_running_yields_error_event_not_exception(
         self, tmp_config: Config
     ) -> None:
