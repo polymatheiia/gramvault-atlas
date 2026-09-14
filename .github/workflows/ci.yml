@@ -77,3 +77,6 @@ jobs:
 
       - name: Lint (oxlint)
         run: npm run lint
+
+      - name: Test (vitest)
+        run: npm test
