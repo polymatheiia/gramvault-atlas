@@ -78,6 +78,13 @@ export interface MediaFile {
   /** Populated by the llava vision model. */
   vision_caption: string | null
   checksum: string | null
+  /** On-screen text read by OCR. `null` both before an attempt and after
+   * a discarded one — told apart by `ocr_attempted_at`. */
+  ocr_text: string | null
+  ocr_attempted_at: string | null
+  ocr_model: string | null
+  vision_model: string | null
+  transcript_model: string | null
 }
 
 export interface Item {

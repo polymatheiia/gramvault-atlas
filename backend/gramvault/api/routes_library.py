@@ -17,6 +17,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from gramvault.ai import embedding_store
 from gramvault.api.deps import get_config_dependency
 from gramvault.chat import fts
 from gramvault.chat.retrieval import fetch_items
@@ -372,6 +373,65 @@ async def get_item(
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         item = _row_to_item(conn, row)
     return item
+
+
+@router.get("/items/{item_id}/similar", response_model=list[Item])
+async def similar_items(
+    item_id: int,
+    limit: int = Query(default=12, ge=1, le=50),
+    config: Config = Depends(get_config_dependency),
+) -> list[Item]:
+    """Vector neighbours of `item_id`, nearest-first. Reuses whichever of
+    its own chunks is already embedded (UX-4) rather than re-embedding
+    through an AI provider — so this is instant and needs no provider
+    configured, but returns `[]` for an item that hasn't been enriched
+    with the `embed` step yet."""
+    with session_scope(config) as conn:
+        if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+        embedding = embedding_store.get_item_embedding(item_id, config=config)
+        if embedding is None:
+            return []
+
+        # +1 because the item's own chunk(s) come back as their own nearest
+        # neighbour; over-fetch a little further to survive de-duplication
+        # across an item's multiple chunks.
+        raw_results = embedding_store.query(embedding, top_k=limit + 5, config=config)
+        seen: set[int] = {item_id}
+        ordered_ids: list[int] = []
+        for result in raw_results:
+            if result.item_id in seen:
+                continue
+            seen.add(result.item_id)
+            ordered_ids.append(result.item_id)
+            if len(ordered_ids) >= limit:
+                break
+
+        items_by_id = fetch_items(conn, ordered_ids)
+        return [items_by_id[i] for i in ordered_ids if i in items_by_id]
+
+
+@router.delete("/items/{item_id}", status_code=204)
+async def delete_item(
+    item_id: int,
+    config: Config = Depends(get_config_dependency),
+) -> None:
+    """Remove an item from the library: the DB row and everything that
+    cascades from it (media_files, item_tags, chat_citations — see
+    schema.sql's ON DELETE CASCADE), plus its embedded vectors.
+
+    Deliberately does not touch the underlying media file(s) on disk.
+    `organizer.py` stores media content-addressed by checksum, so the
+    same file on disk can be referenced by more than one item (e.g. a
+    repost) — deleting it here could silently corrupt an unrelated item.
+    Orphaned files are a much smaller problem than that.
+    """
+    with session_scope(config) as conn:
+        if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+        conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+    embedding_store.delete_by_item(item_id, config=config)
 
 
 @router.get("/authors", response_model=list[Author])

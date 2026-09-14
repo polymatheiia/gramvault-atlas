@@ -4955,6 +4955,40 @@
       }
     },
     "/api/library/items/{item_id}": {
+      "delete": {
+        "description": "Remove an item from the library: the DB row and everything that\ncascades from it (media_files, item_tags, chat_citations \u2014 see\nschema.sql's ON DELETE CASCADE), plus its embedded vectors.\n\nDeliberately does not touch the underlying media file(s) on disk.\n`organizer.py` stores media content-addressed by checksum, so the\nsame file on disk can be referenced by more than one item (e.g. a\nrepost) \u2014 deleting it here could silently corrupt an unrelated item.\nOrphaned files are a much smaller problem than that.",
+        "operationId": "delete_item_api_library_items__item_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Item",
+        "tags": [
+          "library"
+        ]
+      },
       "get": {
         "description": "Fetch a single item with its media files and tags.",
         "operationId": "get_item_api_library_items__item_id__get",
@@ -5043,6 +5077,65 @@
           }
         },
         "summary": "Update Item Category",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/library/items/{item_id}/similar": {
+      "get": {
+        "description": "Vector neighbours of `item_id`, nearest-first. Reuses whichever of\nits own chunks is already embedded (UX-4) rather than re-embedding\nthrough an AI provider \u2014 so this is instant and needs no provider\nconfigured, but returns `[]` for an item that hasn't been enriched\nwith the `embed` step yet.",
+        "operationId": "similar_items_api_library_items__item_id__similar_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 12,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Item"
+                  },
+                  "title": "Response Similar Items Api Library Items  Item Id  Similar Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Similar Items",
         "tags": [
           "library"
         ]

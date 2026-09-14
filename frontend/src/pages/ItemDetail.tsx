@@ -1,15 +1,31 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api, isNotFound, mediaUrl } from '../api/client'
+import { ItemCard } from '../components/ItemCard'
 import { TagBadge } from '../components/TagBadge'
 import { filterSearch, useSiblingIds } from '../lib/gallery'
-import type { CategoryListResponse, CategoryWithCount, Item, MediaFile } from '../types'
+import { useToast } from '../lib/toast'
+import type {
+  CategoryListResponse,
+  CategoryWithCount,
+  EnrichmentRunResponse,
+  EnrichSteps,
+  Item,
+  MediaFile,
+} from '../types'
 
 const ENRICHMENT_LABEL: Record<Item['enrichment_status'], string> = {
   pending: 'Enrichment pending',
   running: 'Enrichment running…',
   done: 'Enriched',
   failed: 'Enrichment failed',
+}
+
+const DEFAULT_RERUN_STEPS: EnrichSteps = {
+  transcribe: true,
+  ocr: true,
+  vision_caption: true,
+  embed: true,
 }
 
 function formatDate(iso: string | null): string {
@@ -19,7 +35,16 @@ function formatDate(iso: string | null): string {
   return d.toLocaleString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
 }
 
-function MediaBlock({ file }: { file: MediaFile }) {
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function MediaBlock({ file, onCopyTranscript }: { file: MediaFile; onCopyTranscript: (text: string) => void }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="overflow-hidden rounded-lg bg-black">
@@ -33,12 +58,30 @@ function MediaBlock({ file }: { file: MediaFile }) {
         <p className="card px-3 py-2 text-sm text-slate-300">
           <span className="label mr-2">AI caption</span>
           {file.vision_caption}
+          {file.vision_model && <span className="ml-2 text-xs text-slate-500">({file.vision_model})</span>}
+        </p>
+      )}
+      {file.ocr_text && (
+        <p className="card px-3 py-2 text-sm text-slate-300">
+          <span className="label mr-2">On-screen text</span>
+          {file.ocr_text}
+          {file.ocr_model && <span className="ml-2 text-xs text-slate-500">({file.ocr_model})</span>}
         </p>
       )}
       {file.transcript && (
-        <p className="card px-3 py-2 text-sm text-slate-300">
-          <span className="label mr-2">Transcript</span>
-          {file.transcript}
+        <p className="card flex items-start justify-between gap-3 px-3 py-2 text-sm text-slate-300">
+          <span>
+            <span className="label mr-2">Transcript</span>
+            {file.transcript}
+            {file.transcript_model && <span className="ml-2 text-xs text-slate-500">({file.transcript_model})</span>}
+          </span>
+          <button
+            type="button"
+            className="btn-secondary shrink-0"
+            onClick={() => onCopyTranscript(file.transcript ?? '')}
+          >
+            Copy
+          </button>
         </p>
       )}
     </div>
@@ -49,6 +92,7 @@ export function ItemDetail() {
   const { id } = useParams<{ id: string }>()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
+  const { push } = useToast()
   const [item, setItem] = useState<Item | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -65,11 +109,16 @@ export function ItemDetail() {
     }
   }, [id, siblingIds])
 
+  const [showShortcuts, setShowShortcuts] = useState(false)
+  const [categoryFocusRequest, setCategoryFocusRequest] = useState(0)
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
       if (e.key === 'ArrowLeft' && prevId != null) navigate(`/items/${prevId}${ctx}`)
       if (e.key === 'ArrowRight' && nextId != null) navigate(`/items/${nextId}${ctx}`)
+      if (e.key === 'c') setCategoryFocusRequest((n) => n + 1)
+      if (e.key === '?') setShowShortcuts((v) => !v)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -80,6 +129,21 @@ export function ItemDetail() {
 
   const [categories, setCategories] = useState<CategoryWithCount[]>([])
   const [savingCategory, setSavingCategory] = useState(false)
+  const [categorySelect, setCategorySelect] = useState<HTMLSelectElement | null>(null)
+
+  useEffect(() => {
+    if (categoryFocusRequest > 0) categorySelect?.focus()
+  }, [categoryFocusRequest, categorySelect])
+
+  const [rerunOpen, setRerunOpen] = useState(false)
+  const [rerunSteps, setRerunSteps] = useState<EnrichSteps>(DEFAULT_RERUN_STEPS)
+  const [rerunning, setRerunning] = useState(false)
+
+  const [similarOpen, setSimilarOpen] = useState(false)
+  const [similarItems, setSimilarItems] = useState<Item[] | null>(null)
+  const [loadingSimilar, setLoadingSimilar] = useState(false)
+
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     api
@@ -148,6 +212,68 @@ export function ItemDetail() {
     }
   }
 
+  /** The classifier's suggestion is already on the item — "confirming" it
+   * just re-PATCHes the same category_id, which the backend always marks
+   * `source: 'manual'` (see routes_library.update_item_category). */
+  function confirmCategory() {
+    if (item?.category_id != null) void saveCategory(item.category_id)
+  }
+
+  async function copyTranscript(text: string) {
+    const ok = await copyToClipboard(text)
+    push({ tone: ok ? 'success' : 'error', message: ok ? 'Transcript copied.' : 'Could not copy to clipboard.' })
+  }
+
+  async function runEnrichment() {
+    if (!id) return
+    setRerunning(true)
+    try {
+      const res = await api.post<EnrichmentRunResponse>('/api/enrich/run', {
+        scope: { item_ids: [Number(id)], only_missing: false },
+        steps: rerunSteps,
+        ocr_scope: 'all_media',
+      })
+      if (res.queued_count === 0) {
+        push({ tone: 'info', message: 'Nothing to run — no step was selected.' })
+      } else {
+        push({ tone: 'info', message: 'Enrichment queued — watch the strip above for progress.', href: '/enrich' })
+        setRerunOpen(false)
+      }
+    } catch (err) {
+      push({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to queue enrichment' })
+    } finally {
+      setRerunning(false)
+    }
+  }
+
+  async function loadSimilar() {
+    if (!id) return
+    setSimilarOpen((open) => !open)
+    if (similarItems != null) return
+    setLoadingSimilar(true)
+    try {
+      setSimilarItems(await api.get<Item[]>(`/api/library/items/${id}/similar`))
+    } catch {
+      setSimilarItems([])
+    } finally {
+      setLoadingSimilar(false)
+    }
+  }
+
+  async function deleteItem() {
+    if (!id || !item) return
+    if (!confirm('Delete this item from the library? The underlying media file is not removed from disk.')) return
+    setDeleting(true)
+    try {
+      await api.delete(`/api/library/items/${id}`)
+      push({ tone: 'success', message: 'Item deleted.' })
+      navigate(`/${ctx}`)
+    } catch (err) {
+      push({ tone: 'error', message: err instanceof Error ? err.message : 'Failed to delete item' })
+      setDeleting(false)
+    }
+  }
+
   if (loading) return <p className="px-4 py-6 text-sm text-slate-500">Loading…</p>
   if (error) return <p className="mx-auto max-w-3xl px-4 py-6 text-sm text-red-300">{error}</p>
   if (!item) return null
@@ -180,14 +306,33 @@ export function ItemDetail() {
           <Link to={`/feed${ctx}`} className="btn-secondary" title="Open the full-screen feed">
             ▶ Feed
           </Link>
+          <button
+            type="button"
+            className="btn-secondary"
+            title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
+            onClick={() => setShowShortcuts((v) => !v)}
+          >
+            ?
+          </button>
         </div>
       </div>
+
+      {showShortcuts && (
+        <div className="card flex flex-wrap gap-x-6 gap-y-1 px-4 py-3 text-sm text-slate-400">
+          <span><kbd className="badge bg-surface-overlay">←</kbd> / <kbd className="badge bg-surface-overlay">→</kbd> previous / next item</span>
+          <span><kbd className="badge bg-surface-overlay">c</kbd> focus category picker</span>
+          <span><kbd className="badge bg-surface-overlay">?</kbd> toggle this panel</span>
+        </div>
+      )}
 
       <div className="flex flex-col gap-4">
         {item.media_files.length === 0 ? (
           <p className="card px-4 py-6 text-center text-sm text-slate-500">No media files on this item.</p>
         ) : (
-          item.media_files.map((file) => <MediaBlock key={file.id ?? file.file_path} file={file} />)
+          item.media_files.map((file) => (
+            <MediaBlock key={file.id ?? file.file_path} file={file} onCopyTranscript={(text) => void copyTranscript(text)} />
+          ))
         )}
       </div>
 
@@ -209,6 +354,7 @@ export function ItemDetail() {
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <span className="label">Category</span>
           <select
+            ref={setCategorySelect}
             className="input w-auto"
             value={item.category_id ?? ''}
             disabled={savingCategory}
@@ -222,9 +368,25 @@ export function ItemDetail() {
             ))}
           </select>
           {item.category_source && item.category_source !== 'manual' && (
-            <span className="text-xs text-slate-500">auto ({item.category_source})</span>
+            <>
+              <span className="text-xs text-slate-500">
+                auto ({item.category_source}
+                {item.category_confidence != null && `, ${Math.round(item.category_confidence * 100)}%`})
+              </span>
+              {item.category_id != null && (
+                <button type="button" className="btn-secondary" disabled={savingCategory} onClick={confirmCategory}>
+                  Confirm
+                </button>
+              )}
+            </>
           )}
         </div>
+        {item.category_reason && item.category_source !== 'manual' && (
+          <p className="text-xs text-slate-500">
+            <span className="label mr-2">Why</span>
+            {item.category_reason}
+          </p>
+        )}
 
         <div className="flex items-center justify-between text-sm text-slate-400">
           <span>
@@ -280,6 +442,81 @@ export function ItemDetail() {
             </button>
           </form>
         </div>
+      </div>
+
+      <div className="card flex flex-col gap-3 px-4 py-4">
+        <span className="label">Actions</span>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn-secondary" onClick={() => setRerunOpen((v) => !v)}>
+            Re-run enrichment
+          </button>
+          <button type="button" className="btn-secondary" onClick={() => void loadSimilar()}>
+            Find similar
+          </button>
+          <button
+            type="button"
+            className="btn-secondary text-red-300 hover:text-red-200"
+            onClick={() => void deleteItem()}
+            disabled={deleting}
+          >
+            Delete item
+          </button>
+        </div>
+
+        {rerunOpen && (
+          <div className="flex flex-col gap-2 border-t border-surface-border pt-3">
+            <div className="flex flex-wrap gap-3 text-sm text-slate-300">
+              {(
+                [
+                  ['transcribe', 'Transcribe audio'],
+                  ['ocr', 'On-screen text (OCR)'],
+                  ['vision_caption', 'Describe frames (vision)'],
+                  ['embed', 'Re-embed for search'],
+                ] as const
+              ).map(([key, label]) => (
+                <label key={key} className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={rerunSteps[key]}
+                    onChange={(e) => setRerunSteps((s) => ({ ...s, [key]: e.target.checked }))}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={rerunning || !Object.values(rerunSteps).some(Boolean)}
+                onClick={() => void runEnrichment()}
+              >
+                {rerunning ? 'Queuing…' : 'Run'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {similarOpen && (
+          <div className="flex flex-col gap-2 border-t border-surface-border pt-3">
+            <span className="label">Similar items</span>
+            {loadingSimilar ? (
+              <p className="text-sm text-slate-500">Loading…</p>
+            ) : !similarItems || similarItems.length === 0 ? (
+              <p className="text-sm text-slate-500">
+                {item.enrichment_status === 'done'
+                  ? 'No similar items found.'
+                  : "Nothing yet — this item hasn't been embedded for search."}
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {similarItems.map((similar) => (
+                  <ItemCard key={similar.id} item={similar} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )

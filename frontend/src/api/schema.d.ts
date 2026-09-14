@@ -779,7 +779,19 @@ export interface paths {
         get: operations["get_item_api_library_items__item_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Item
+         * @description Remove an item from the library: the DB row and everything that
+         *     cascades from it (media_files, item_tags, chat_citations — see
+         *     schema.sql's ON DELETE CASCADE), plus its embedded vectors.
+         *
+         *     Deliberately does not touch the underlying media file(s) on disk.
+         *     `organizer.py` stores media content-addressed by checksum, so the
+         *     same file on disk can be referenced by more than one item (e.g. a
+         *     repost) — deleting it here could silently corrupt an unrelated item.
+         *     Orphaned files are a much smaller problem than that.
+         */
+        delete: operations["delete_item_api_library_items__item_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -789,6 +801,30 @@ export interface paths {
          *     overwritten by the automatic classifier.
          */
         patch: operations["update_item_category_api_library_items__item_id__patch"];
+        trace?: never;
+    };
+    "/api/library/items/{item_id}/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Similar Items
+         * @description Vector neighbours of `item_id`, nearest-first. Reuses whichever of
+         *     its own chunks is already embedded (UX-4) rather than re-embedding
+         *     through an AI provider — so this is instant and needs no provider
+         *     configured, but returns `[]` for an item that hasn't been enriched
+         *     with the `embed` step yet.
+         */
+        get: operations["similar_items_api_library_items__item_id__similar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/library/items/{item_id}/tags": {
@@ -3316,6 +3352,35 @@ export interface operations {
             };
         };
     };
+    delete_item_api_library_items__item_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_item_category_api_library_items__item_id__patch: {
         parameters: {
             query?: never;
@@ -3338,6 +3403,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Item"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    similar_items_api_library_items__item_id__similar_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item"][];
                 };
             };
             /** @description Validation Error */

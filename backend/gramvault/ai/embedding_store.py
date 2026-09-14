@@ -103,6 +103,29 @@ def upsert_item(
     )
 
 
+def get_item_embedding(item_id: int, config: Config | None = None) -> list[float] | None:
+    """The stored embedding for one of `item_id`'s chunks (arbitrarily the
+    first one Chroma returns), for "find similar" — reuses whatever's
+    already indexed rather than re-embedding the item's text through an AI
+    provider. `None` if the item has no embedded chunk yet (not enriched,
+    or `embed` was left off its enrichment run)."""
+    collection = get_collection(config)
+    raw = collection.get(where={"item_id": item_id}, include=["embeddings"], limit=1)
+    embeddings = raw.get("embeddings")
+    if embeddings is None or len(embeddings) == 0:
+        return None
+    return list(embeddings[0])
+
+
+def delete_by_item(item_id: int, config: Config | None = None) -> None:
+    """Drop every embedded chunk for `item_id` — called when the item
+    itself is deleted from the library, so a stale vector never surfaces
+    in chat retrieval or "find similar" for an item that no longer exists."""
+    collection = get_collection(config)
+    with contextlib.suppress(Exception):  # nothing embedded yet is fine
+        collection.delete(where={"item_id": item_id})
+
+
 def query(embedding: list[float], top_k: int = 10, config: Config | None = None) -> list[QueryResult]:
     """Nearest-neighbor search. Returns results ordered nearest-first, with
     `score` as a similarity in roughly [0, 1] (1 - normalized distance;

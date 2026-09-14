@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from gramvault.ai import embedding_store
 from gramvault.config import Config
 from gramvault.db.session import session_scope
 
@@ -405,3 +406,67 @@ def test_create_rename_and_delete_category(client: TestClient, tmp_config: Confi
     )
     assert moved.status_code == 204
     assert client.get("/api/library/items", params={"category": "other"}).json()["total"] == 1
+
+
+def test_delete_item_removes_it_and_cascades(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_library(tmp_config)
+
+    resp = client.delete(f"/api/library/items/{ids['item1_id']}")
+    assert resp.status_code == 204
+
+    assert client.get(f"/api/library/items/{ids['item1_id']}").status_code == 404
+    with session_scope(tmp_config) as conn:
+        assert conn.execute(
+            "SELECT 1 FROM media_files WHERE item_id = ?", (ids["item1_id"],)
+        ).fetchone() is None
+        assert conn.execute(
+            "SELECT 1 FROM item_tags WHERE item_id = ?", (ids["item1_id"],)
+        ).fetchone() is None
+
+    # the other item is untouched
+    assert client.get(f"/api/library/items/{ids['item2_id']}").status_code == 200
+
+
+def test_delete_item_404_for_unknown_id(client: TestClient, tmp_config: Config) -> None:
+    _seed_library(tmp_config)
+    assert client.delete("/api/library/items/999999").status_code == 404
+
+
+def test_delete_item_drops_its_embedded_vectors(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_library(tmp_config)
+    embedding_store.upsert_item(
+        ids["item1_id"], [0.1, 0.2, 0.3], "a sunny beach day", config=tmp_config
+    )
+
+    assert client.delete(f"/api/library/items/{ids['item1_id']}").status_code == 204
+
+    assert embedding_store.get_item_embedding(ids["item1_id"], config=tmp_config) is None
+
+
+def test_similar_items_returns_empty_before_embedding(
+    client: TestClient, tmp_config: Config
+) -> None:
+    ids = _seed_library(tmp_config)
+    assert client.get(f"/api/library/items/{ids['item1_id']}/similar").json() == []
+
+
+def test_similar_items_404_for_unknown_id(client: TestClient, tmp_config: Config) -> None:
+    _seed_library(tmp_config)
+    assert client.get("/api/library/items/999999/similar").status_code == 404
+
+
+def test_similar_items_excludes_self_and_orders_by_score(
+    client: TestClient, tmp_config: Config
+) -> None:
+    ids = _seed_library(tmp_config)
+    embedding_store.upsert_item(
+        ids["item1_id"], [1.0, 0.0, 0.0], "a sunny beach day", config=tmp_config
+    )
+    embedding_store.upsert_item(
+        ids["item2_id"], [0.9, 0.1, 0.0], "city nightlife video", config=tmp_config
+    )
+
+    resp = client.get(f"/api/library/items/{ids['item1_id']}/similar")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [item["id"] for item in body] == [ids["item2_id"]]
