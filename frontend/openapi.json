@@ -5812,6 +5812,49 @@
         ]
       }
     },
+    "/api/library/media/{media_file_id}/captions.vtt": {
+      "get": {
+        "description": "WebVTT captions built from `transcript_segments` (migration 008),\nfor a `<track kind=\"captions\">` on the video element (audit finding\nUX-11 \u2014 videos had no captions even though transcripts exist).\n404s (rather than an empty-but-valid track) when there are no\nsegments, so the frontend can tell \"no transcript yet\" from \"silent\nvideo with an empty transcript\" and skip rendering the <track>.",
+        "operationId": "media_captions_vtt_api_library_media__media_file_id__captions_vtt_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "media_file_id",
+            "required": true,
+            "schema": {
+              "title": "Media File Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Media Captions Vtt",
+        "tags": [
+          "library"
+        ]
+      }
+    },
     "/api/library/tags": {
       "get": {
         "description": "List all known tags (for filter dropdowns / tag-cloud UI).",

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { api, isNotFound, mediaUrl } from '../api/client'
+import { api, captionsUrl, isNotFound, mediaUrl } from '../api/client'
 import { ItemCard } from '../components/ItemCard'
 import { TagBadge } from '../components/TagBadge'
 import { filterSearch, useSiblingIds } from '../lib/gallery'
@@ -49,7 +49,11 @@ function MediaBlock({ file, onCopyTranscript }: { file: MediaFile; onCopyTranscr
     <div className="flex flex-col gap-2">
       <div className="overflow-hidden rounded-lg bg-black">
         {file.media_type === 'video' ? (
-          <video src={mediaUrl(file.file_path)} controls className="max-h-[70vh] w-full" />
+          <video src={mediaUrl(file.file_path)} controls className="max-h-[70vh] w-full">
+            {file.id != null && file.transcript && (
+              <track kind="captions" srcLang="auto" label="Transcript" src={captionsUrl(file.id)} default />
+            )}
+          </video>
         ) : (
           <img src={mediaUrl(file.file_path)} alt="" className="max-h-[70vh] w-full object-contain" />
         )}

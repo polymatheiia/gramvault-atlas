@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { api, mediaUrl } from '../api/client'
+import { api, captionsUrl, mediaUrl } from '../api/client'
 import { filterSearch, useSiblingIds } from '../lib/gallery'
 import type { Item, ItemListResponse, MediaFile } from '../types'
 
@@ -58,7 +58,11 @@ function FeedMedia({ item, active }: { item: Item; active: boolean }) {
           playsInline
           preload={active ? 'auto' : 'metadata'}
           onClick={() => setPaused((p) => !p)}
-        />
+        >
+          {first.id != null && first.transcript && (
+            <track kind="captions" srcLang="auto" label="Transcript" src={captionsUrl(first.id)} default />
+          )}
+        </video>
         {paused && (
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <span className="rounded-full bg-black/50 px-5 py-3 text-2xl text-white">▶</span>
@@ -84,7 +88,11 @@ function FeedMedia({ item, active }: { item: Item; active: boolean }) {
             className="flex h-full w-full shrink-0 snap-center items-center justify-center"
           >
             {f.media_type === 'video' ? (
-              <video src={mediaUrl(f.file_path)} className="max-h-full max-w-full" controls playsInline />
+              <video src={mediaUrl(f.file_path)} className="max-h-full max-w-full" controls playsInline>
+                {f.id != null && f.transcript && (
+                  <track kind="captions" srcLang="auto" label="Transcript" src={captionsUrl(f.id)} default />
+                )}
+              </video>
             ) : (
               <img src={mediaUrl(f.file_path)} alt="" className="max-h-full max-w-full object-contain" />
             )}

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from gramvault.ai import embedding_store
@@ -457,6 +458,44 @@ async def similar_items(
 
         items_by_id = fetch_items(conn, ordered_ids)
         return [items_by_id[i] for i in ordered_ids if i in items_by_id]
+
+
+def _vtt_timestamp(seconds: float) -> str:
+    if seconds < 0:
+        seconds = 0.0
+    total_ms = round(seconds * 1000)
+    hours, rem_ms = divmod(total_ms, 3_600_000)
+    minutes, rem_ms = divmod(rem_ms, 60_000)
+    secs, ms = divmod(rem_ms, 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}.{ms:03d}"
+
+
+@router.get("/media/{media_file_id}/captions.vtt", response_class=PlainTextResponse)
+async def media_captions_vtt(
+    media_file_id: int,
+    config: Config = Depends(get_config_dependency),
+) -> PlainTextResponse:
+    """WebVTT captions built from `transcript_segments` (migration 008),
+    for a `<track kind="captions">` on the video element (audit finding
+    UX-11 — videos had no captions even though transcripts exist).
+    404s (rather than an empty-but-valid track) when there are no
+    segments, so the frontend can tell "no transcript yet" from "silent
+    video with an empty transcript" and skip rendering the <track>."""
+    with session_scope(config) as conn:
+        rows = conn.execute(
+            "SELECT start_seconds, end_seconds, text FROM transcript_segments "
+            "WHERE media_file_id = ? ORDER BY sequence_index",
+            (media_file_id,),
+        ).fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail="No transcript segments for this media file")
+
+    lines = ["WEBVTT", ""]
+    for row in rows:
+        lines.append(f"{_vtt_timestamp(row['start_seconds'])} --> {_vtt_timestamp(row['end_seconds'])}")
+        lines.append(row["text"])
+        lines.append("")
+    return PlainTextResponse("\n".join(lines), media_type="text/vtt")
 
 
 @router.delete("/items/{item_id}", status_code=204)

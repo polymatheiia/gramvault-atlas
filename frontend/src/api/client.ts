@@ -182,6 +182,14 @@ export function mediaUrl(filePath: string): string {
   return `${API_BASE_URL}/media/${encoded}`
 }
 
+/** WebVTT captions for a media file, built from Whisper's per-segment
+ * timestamps (`GET /api/library/media/{id}/captions.vtt`) — 404s when
+ * there's no transcript yet, so callers should treat a failed load as
+ * "no captions available" rather than an error. */
+export function captionsUrl(mediaFileId: number): string {
+  return `${API_BASE_URL}/api/library/media/${mediaFileId}/captions.vtt`
+}
+
 export interface ChatStreamDonePayload {
   message_id: number
   content: string

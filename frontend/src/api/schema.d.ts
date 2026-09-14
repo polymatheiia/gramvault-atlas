@@ -919,6 +919,31 @@ export interface paths {
         patch: operations["update_item_tags_api_library_items__item_id__tags_patch"];
         trace?: never;
     };
+    "/api/library/media/{media_file_id}/captions.vtt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Media Captions Vtt
+         * @description WebVTT captions built from `transcript_segments` (migration 008),
+         *     for a `<track kind="captions">` on the video element (audit finding
+         *     UX-11 — videos had no captions even though transcripts exist).
+         *     404s (rather than an empty-but-valid track) when there are no
+         *     segments, so the frontend can tell "no transcript yet" from "silent
+         *     video with an empty transcript" and skip rendering the <track>.
+         */
+        get: operations["media_captions_vtt_api_library_media__media_file_id__captions_vtt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/library/tags": {
         parameters: {
             query?: never;
@@ -3860,6 +3885,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Item"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    media_captions_vtt_api_library_media__media_file_id__captions_vtt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_file_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
                 };
             };
             /** @description Validation Error */

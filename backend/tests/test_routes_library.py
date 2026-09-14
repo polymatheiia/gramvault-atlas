@@ -398,6 +398,40 @@ def test_patch_item_meta_404_for_unknown_item(client: TestClient) -> None:
     assert client.patch("/api/library/items/424242/meta", json={"favourite": True}).status_code == 404
 
 
+def test_media_captions_vtt(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_library(tmp_config)
+    with session_scope(tmp_config) as conn:
+        media_id = conn.execute(
+            "INSERT INTO media_files (item_id, file_path, media_type, sequence_index) "
+            "VALUES (?, 'media/bb/bbbb.mp4', 'video', 0) RETURNING id",
+            (ids["item2_id"],),
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO transcript_segments (media_file_id, sequence_index, start_seconds, end_seconds, text) "
+            "VALUES (?, 0, 0.0, 2.5, 'Hello there'), (?, 1, 2.5, 65.25, 'Second line')",
+            (media_id, media_id),
+        )
+
+    res = client.get(f"/api/library/media/{media_id}/captions.vtt")
+    assert res.status_code == 200
+    assert res.headers["content-type"].startswith("text/vtt")
+    assert res.text.startswith("WEBVTT\n\n")
+    assert "00:00:00.000 --> 00:00:02.500" in res.text
+    assert "Hello there" in res.text
+    assert "00:01:05.250" in res.text
+
+
+def test_media_captions_vtt_404_without_segments(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_library(tmp_config)
+    with session_scope(tmp_config) as conn:
+        media_id = conn.execute(
+            "INSERT INTO media_files (item_id, file_path, media_type, sequence_index) "
+            "VALUES (?, 'media/cc/cccc.mp4', 'video', 0) RETURNING id",
+            (ids["item2_id"],),
+        ).fetchone()["id"]
+    assert client.get(f"/api/library/media/{media_id}/captions.vtt").status_code == 404
+
+
 def test_list_items_filter_by_favourite(client: TestClient, tmp_config: Config) -> None:
     ids = _seed_library(tmp_config)
     client.patch(f"/api/library/items/{ids['item1_id']}/meta", json={"favourite": True})
