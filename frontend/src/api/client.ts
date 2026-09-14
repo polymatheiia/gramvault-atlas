@@ -188,10 +188,20 @@ export interface ChatStreamDonePayload {
   citations: ChatCitation[]
 }
 
+export interface ChatSourcesPayload {
+  results: { item_id: number; media_file_id: number | null; snippet: string | null; score: number }[]
+}
+
 export interface ChatStreamHandlers {
+  onSources?: (payload: ChatSourcesPayload) => void
   onToken?: (content: string) => void
   onDone?: (payload: ChatStreamDonePayload) => void
   onError?: (detail: string) => void
+  /** The caller aborted `signal` (the Stop button) — not an error. Any
+   * tokens already delivered via `onToken` are what the user sees; the
+   * server may still persist that partial reply (see stream_message's
+   * disconnect-durability guarantee), but no further `onDone` arrives. */
+  onStopped?: () => void
 }
 
 /**
@@ -219,7 +229,8 @@ export async function streamChatMessage(
       signal,
     })
   } catch {
-    handlers.onError?.('Network error while sending message')
+    if (signal?.aborted) handlers.onStopped?.()
+    else handlers.onError?.('Network error while sending message')
     return
   }
 
@@ -252,7 +263,9 @@ export async function streamChatMessage(
     if (dataLines.length === 0) return
     const data = dataLines.join('\n')
     try {
-      if (eventName === 'token') {
+      if (eventName === 'sources') {
+        handlers.onSources?.(JSON.parse(data) as ChatSourcesPayload)
+      } else if (eventName === 'token') {
         const parsed = JSON.parse(data) as { content: string }
         handlers.onToken?.(parsed.content)
       } else if (eventName === 'done') {
@@ -291,13 +304,21 @@ export async function streamChatMessage(
     }
   }
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    drainFrames()
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      drainFrames()
+    }
+    if (buffer.trim()) handleFrame(buffer)
+  } catch {
+    // Aborting `signal` mid-stream (Stop) tears down the fetch body reader
+    // the same way a network drop would — tell them apart by the signal,
+    // not by rethrowing an AbortError past callers that don't expect one.
+    if (signal?.aborted) handlers.onStopped?.()
+    else handlers.onError?.('Connection to the server was lost')
   }
-  if (buffer.trim()) handleFrame(buffer)
 }
 
 export { API_BASE_URL }

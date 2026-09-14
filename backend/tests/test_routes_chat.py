@@ -56,6 +56,32 @@ class TestSessionCrud:
         assert response.status_code == 200
         assert response.json() == []
 
+    def test_rename_session(self, client: TestClient) -> None:
+        session_id = _create_session(client, "old title")
+
+        response = client.patch(f"/api/chat/sessions/{session_id}", json={"title": "new title"})
+
+        assert response.status_code == 200
+        assert response.json()["title"] == "new title"
+        assert client.get("/api/chat/sessions").json()[0]["title"] == "new title"
+
+    def test_rename_missing_session_is_404(self, client: TestClient) -> None:
+        response = client.patch("/api/chat/sessions/99999", json={"title": "x"})
+        assert response.status_code == 404
+
+    def test_delete_session_removes_it_and_its_messages(self, client: TestClient) -> None:
+        session_id = _create_session(client)
+
+        response = client.delete(f"/api/chat/sessions/{session_id}")
+
+        assert response.status_code == 204
+        assert client.get(f"/api/chat/sessions/{session_id}/messages").status_code == 404
+        assert session_id not in [s["id"] for s in client.get("/api/chat/sessions").json()]
+
+    def test_delete_missing_session_is_404(self, client: TestClient) -> None:
+        response = client.delete("/api/chat/sessions/99999")
+        assert response.status_code == 404
+
 
 class TestSendMessageStreaming:
     def test_missing_session_is_404_before_any_streaming(self, client: TestClient) -> None:
@@ -96,6 +122,7 @@ class TestSendMessageStreaming:
         session_id = _create_session(client)
 
         async def fake_stream_message(session_id, user_content, config=None):
+            yield {"event": "sources", "data": '{"results": [{"item_id": 1, "media_file_id": null, "snippet": null, "score": 0.5}]}'}
             yield {"event": "token", "data": '{"content": "hi "}'}
             yield {"event": "token", "data": '{"content": "there [[item:1]]"}'}
             yield {
@@ -123,6 +150,7 @@ class TestSendMessageStreaming:
             assert "text/event-stream" in response.headers["content-type"]
             raw = "".join(response.iter_text())
 
+        assert "event: sources" in raw
         assert "event: token" in raw
         assert "event: done" in raw
         assert "hi there" in raw

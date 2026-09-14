@@ -640,6 +640,23 @@
         "title": "ChatSessionCreateRequest",
         "type": "object"
       },
+      "ChatSessionRenameRequest": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ChatSessionRenameRequest",
+        "type": "object"
+      },
       "ConnectLocalRequest": {
         "properties": {
           "confirm": {
@@ -3253,6 +3270,91 @@
         ]
       }
     },
+    "/api/chat/sessions/{session_id}": {
+      "delete": {
+        "operationId": "delete_chat_session_api_chat_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Chat Session",
+        "tags": [
+          "chat"
+        ]
+      },
+      "patch": {
+        "operationId": "rename_chat_session_api_chat_sessions__session_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatSessionRenameRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rename Chat Session",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
     "/api/chat/sessions/{session_id}/messages": {
       "get": {
         "description": "List messages (with citations) in a session, oldest first.",
@@ -3300,7 +3402,7 @@
         ]
       },
       "post": {
-        "description": "Send a user message and stream back the assistant's RAG response as\nServer-Sent Events.\n\nEvent stream shape (see `gramvault.chat.service.stream_message`):\n    event: token   data: {\"content\": \"...\"}          (0+ times)\n    event: done    data: {\"message_id\", \"content\", \"citations\": [...]}\n    event: error   data: {\"detail\": \"...\"}           (terminal, instead\n                                                        of \"done\", for a\n                                                        mid-stream Ollama\n                                                        failure)\n\nCitations are inline `[[item:<item_id>]]` markers in the streamed\n`content` \u2014 see `gramvault.chat.prompt` for the exact format contract\n(the frontend parses these into clickable chips).\n\n404 if the session doesn't exist; 503 (before any streaming begins) if\nOllama isn't running or the required models aren't pulled.",
+        "description": "Send a user message and stream back the assistant's RAG response as\nServer-Sent Events.\n\nEvent stream shape (see `gramvault.chat.service.stream_message`):\n    event: sources data: {\"results\": [...]}           (once, before the\n                                                         first token)\n    event: token   data: {\"content\": \"...\"}          (0+ times)\n    event: done    data: {\"message_id\", \"content\", \"citations\": [...]}\n    event: error   data: {\"detail\": \"...\"}           (terminal, instead\n                                                        of \"done\", for a\n                                                        mid-stream Ollama\n                                                        failure)\n\nCitations are inline `[[item:<item_id>]]` markers in the streamed\n`content` \u2014 see `gramvault.chat.prompt` for the exact format contract\n(the frontend parses these into clickable chips).\n\n404 if the session doesn't exist; 503 (before any streaming begins) if\nOllama isn't running or the required models aren't pulled.",
         "operationId": "send_chat_message_api_chat_sessions__session_id__messages_post",
         "parameters": [
           {

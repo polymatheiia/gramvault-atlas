@@ -79,6 +79,34 @@ async def list_chat_sessions(
         return service.list_sessions(conn)
 
 
+class ChatSessionRenameRequest(BaseModel):
+    title: str | None = None
+
+
+@router.patch("/sessions/{session_id}", response_model=ChatSession)
+async def rename_chat_session(
+    session_id: int,
+    body: ChatSessionRenameRequest,
+    config: Config = Depends(get_config_dependency),
+) -> ChatSession:
+    with session_scope(config) as conn:
+        session = service.rename_session(conn, session_id, body.title)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Chat session {session_id} not found")
+    return session
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_chat_session(
+    session_id: int,
+    config: Config = Depends(get_config_dependency),
+) -> None:
+    with session_scope(config) as conn:
+        existed = service.delete_session(conn, session_id)
+    if not existed:
+        raise HTTPException(status_code=404, detail=f"Chat session {session_id} not found")
+
+
 @router.get("/sessions/{session_id}/messages", response_model=list[ChatMessage])
 async def list_chat_messages(
     session_id: int,
@@ -101,6 +129,8 @@ async def send_chat_message(
     Server-Sent Events.
 
     Event stream shape (see `gramvault.chat.service.stream_message`):
+        event: sources data: {"results": [...]}           (once, before the
+                                                             first token)
         event: token   data: {"content": "..."}          (0+ times)
         event: done    data: {"message_id", "content", "citations": [...]}
         event: error   data: {"detail": "..."}           (terminal, instead

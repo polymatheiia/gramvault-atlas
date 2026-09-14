@@ -96,6 +96,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Chat Session */
+        delete: operations["delete_chat_session_api_chat_sessions__session_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Chat Session */
+        patch: operations["rename_chat_session_api_chat_sessions__session_id__patch"];
+        trace?: never;
+    };
     "/api/chat/sessions/{session_id}/messages": {
         parameters: {
             query?: never;
@@ -115,6 +133,8 @@ export interface paths {
          *     Server-Sent Events.
          *
          *     Event stream shape (see `gramvault.chat.service.stream_message`):
+         *         event: sources data: {"results": [...]}           (once, before the
+         *                                                              first token)
          *         event: token   data: {"content": "..."}          (0+ times)
          *         event: done    data: {"message_id", "content", "citations": [...]}
          *         event: error   data: {"detail": "..."}           (terminal, instead
@@ -1318,6 +1338,11 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /** ChatSessionRenameRequest */
+        ChatSessionRenameRequest: {
+            /** Title */
+            title?: string | null;
+        };
         /** ConnectLocalRequest */
         ConnectLocalRequest: {
             /**
@@ -2250,6 +2275,70 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSession"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_chat_session_api_chat_sessions__session_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_chat_session_api_chat_sessions__session_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSessionRenameRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

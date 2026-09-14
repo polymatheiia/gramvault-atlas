@@ -236,4 +236,37 @@ describe('streamChatMessage', () => {
     await streamChatMessage(1, 'hello', { onToken: (t) => tokens.push(t) })
     expect(tokens).toEqual(['ok'])
   })
+
+  it('parses a sources event before the first token', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        sseBody(
+          'event: sources\r\ndata: {"results":[{"item_id":3,"media_file_id":null,"snippet":"s","score":0.9}]}\r\n\r\n' +
+            'event: token\r\ndata: {"content":"hi"}\r\n\r\n',
+        ),
+      ),
+    )
+    let sources: unknown = null
+    await streamChatMessage(1, 'hello', { onSources: (s) => (sources = s) })
+    expect(sources).toEqual({ results: [{ item_id: 3, media_file_id: null, snippet: 's', score: 0.9 }] })
+  })
+
+  it('calls onStopped instead of onError when an already-aborted signal breaks the read loop', async () => {
+    const controller = new AbortController()
+    const stream = new ReadableStream<Uint8Array>({
+      pull(streamController) {
+        controller.abort()
+        streamController.error(new DOMException('The user aborted a request.', 'AbortError'))
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(stream, { status: 200 })))
+
+    let stopped = false
+    let error: string | undefined
+    await streamChatMessage(1, 'hello', { onStopped: () => (stopped = true), onError: (d) => (error = d) }, controller.signal)
+
+    expect(stopped).toBe(true)
+    expect(error).toBeUndefined()
+  })
 })

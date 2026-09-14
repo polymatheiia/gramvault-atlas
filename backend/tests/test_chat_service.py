@@ -158,10 +158,18 @@ class TestStreamMessage:
                 async for event in service.stream_message(session.id, "any pasta?", config=tmp_config)
             ]
 
+        source_events = [e for e in events if e["event"] == "sources"]
         token_events = [e for e in events if e["event"] == "token"]
         done_events = [e for e in events if e["event"] == "done"]
         assert len(done_events) == 1
         assert not [e for e in events if e["event"] == "error"]
+
+        # sources arrives once, before the first token, and carries what
+        # retrieval actually found (not filtered down to what got cited).
+        assert events.index(source_events[0]) < events.index(token_events[0])
+        assert json.loads(source_events[0]["data"]) == {
+            "results": [{"item_id": 1, "media_file_id": None, "snippet": "a pasta recipe", "score": 0.9}]
+        }
 
         full_content = "".join(json.loads(e["data"])["content"] for e in token_events)
         assert "Sure" in full_content
@@ -202,8 +210,10 @@ class TestStreamMessage:
             patch("gramvault.ai.ollama_client.stream_chat", new=_fake_stream_chat),
         ):
             gen = service.stream_message(session.id, "any pasta?", config=tmp_config)
-            first = await gen.__anext__()
-            assert first["event"] == "token"
+            sources = await gen.__anext__()
+            assert sources["event"] == "sources"
+            first_token = await gen.__anext__()
+            assert first_token["event"] == "token"
             await gen.aclose()  # simulates the client going away mid-stream
 
         conn = get_connection(tmp_config)

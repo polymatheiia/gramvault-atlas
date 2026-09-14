@@ -56,6 +56,25 @@ def list_sessions(conn: sqlite3.Connection) -> list[ChatSession]:
     ]
 
 
+def rename_session(conn: sqlite3.Connection, session_id: int, title: str | None) -> ChatSession | None:
+    """`None` return means the session doesn't exist; caller 404s."""
+    if get_session(conn, session_id) is None:
+        return None
+    conn.execute("UPDATE chat_sessions SET title = ? WHERE id = ?", (title, session_id))
+    conn.commit()
+    return get_session(conn, session_id)
+
+
+def delete_session(conn: sqlite3.Connection, session_id: int) -> bool:
+    """Delete a session and its messages/citations (ON DELETE CASCADE).
+    Returns False if the session didn't exist, so the caller can 404."""
+    if get_session(conn, session_id) is None:
+        return False
+    conn.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+    conn.commit()
+    return True
+
+
 def list_messages(conn: sqlite3.Connection, session_id: int) -> list[ChatMessage]:
     """Messages in a session, oldest first, each with its citations."""
     message_rows = conn.execute(
@@ -148,10 +167,17 @@ async def stream_message(
 
     Yields SSE-event dicts (shape expected by
     `sse_starlette.sse.EventSourceResponse`):
+        {"event": "sources", "data": '{"results": [...]}'}     — once, before
+                                                                  the first token
         {"event": "token", "data": '{"content": "..."}'}       — 0+ times
         {"event": "done",  "data": '{"message_id", "content", "citations"}'}
         {"event": "error", "data": '{"detail": "..."}'}        — terminal, in
                                                                   place of "done"
+
+    `sources` carries the same retrieval results the prompt was built
+    from (UX-5 — the frontend only ever saw whichever of those the model
+    chose to cite, not what retrieval actually surfaced), each shaped like
+    the citations `done` sends: item_id/media_file_id/snippet/score.
 
     Opens and owns its own SQLite connection for the lifetime of the
     stream (a route handler can't hold a `with session_scope()` block open
@@ -181,6 +207,23 @@ async def stream_message(
         valid_item_ids = set(items.keys())
 
         _persist_message(conn, session_id, ChatRole.USER, user_content)
+
+        yield {
+            "event": "sources",
+            "data": json.dumps(
+                {
+                    "results": [
+                        {
+                            "item_id": r.item_id,
+                            "media_file_id": r.media_file_id,
+                            "snippet": r.snippet,
+                            "score": r.score,
+                        }
+                        for r in results
+                    ]
+                }
+            ),
+        }
 
         messages = prompt.build_messages(history, items, results, user_content)
 
