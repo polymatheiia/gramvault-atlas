@@ -6,6 +6,7 @@ import type { Schemas } from '../api/schema'
 type PullSession = Schemas['PullSessionResponse']
 type PullProgress = Schemas['PullProgress']
 type PullRunResponse = Schemas['PullRunResponse']
+type Job = Schemas['Job']
 
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return 'never'
@@ -72,6 +73,7 @@ export function Pull() {
   const [progress, setProgress] = useState<PullProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [history, setHistory] = useState<Job[]>([])
 
   const [cookies, setCookies] = useState('')
   const [showPaste, setShowPaste] = useState(false)
@@ -102,10 +104,18 @@ export function Pull() {
     }
   }, [])
 
+  const refreshHistory = useCallback(() => {
+    api
+      .get<Job[]>('/api/jobs?kind=pull&limit=5')
+      .then(setHistory)
+      .catch(() => undefined)
+  }, [])
+
   useEffect(() => {
     void refreshSession()
     void refreshProgress()
-  }, [refreshSession, refreshProgress])
+    refreshHistory()
+  }, [refreshSession, refreshProgress, refreshHistory])
 
   // Poll while a pull job is active.
   useEffect(() => {
@@ -126,12 +136,13 @@ export function Pull() {
               `${p.linked} with media${p.failed ? `, ${p.failed} failed` : ''}.`,
           )
         }
+        refreshHistory()
       }
     }, 2000)
     return () => {
       if (pollRef.current) clearTimeout(pollRef.current)
     }
-  }, [busy, progress, refreshProgress])
+  }, [busy, progress, refreshProgress, refreshHistory])
 
   async function connect(kind: 'paste' | 'local') {
     setError(null)
@@ -373,6 +384,27 @@ export function Pull() {
                   them next.
                 </p>
               )}
+            </section>
+          )}
+
+          {history.length > 0 && (
+            <section className="flex flex-col gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">Recent runs</h2>
+              <div className="flex flex-col gap-1">
+                {history.map((j) => (
+                  <div
+                    key={j.id}
+                    className="card flex items-center justify-between gap-3 px-3 py-2 text-xs text-slate-400"
+                  >
+                    <span className={j.status === 'failed' ? 'text-red-300' : 'text-slate-300'}>{j.status}</span>
+                    <span>{formatDate(j.finished_at ?? j.started_at ?? j.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">
+                No in-app scheduler yet — run <code className="text-slate-400">gramvault pull</code> from a
+                cron job or systemd timer for hands-off pulls.
+              </p>
             </section>
           )}
         </>

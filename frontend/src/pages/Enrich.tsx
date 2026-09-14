@@ -77,6 +77,7 @@ export function Enrich() {
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const refreshProgress = useCallback(async () => {
@@ -143,6 +144,7 @@ export function Enrich() {
 
   async function run(overrideItemIds?: number[]) {
     setError(null)
+    setNotice(null)
     setBusy(true)
     const body: EnrichmentRunRequest = {
       scope: {
@@ -157,7 +159,7 @@ export function Enrich() {
       const res = await api.post<EnrichmentRunResponse>('/api/enrich/run', body)
       if (res.queued_count === 0) {
         setBusy(false)
-        setError('Nothing matched — every item in scope already has this done.')
+        setNotice('Nothing matched — every item in scope already has this done.')
       }
       await refreshProgress()
     } catch (err) {
@@ -303,6 +305,9 @@ export function Enrich() {
         {error && (
           <p className="card border-red-900/60 bg-red-950/40 px-4 py-2 text-sm text-red-300">{error}</p>
         )}
+        {notice && (
+          <p className="card border-accent/40 bg-accent-soft/40 px-4 py-2 text-sm text-slate-200">{notice}</p>
+        )}
         {progress && (
           <div className="card flex flex-col gap-3 px-4 py-3">
             {(Object.keys(STEP_LABELS) as EnrichStepName[]).map((name) => (
@@ -321,9 +326,19 @@ export function Enrich() {
 
       {failures.length > 0 && (
         <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Failed ({failures.length})
-          </h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Failed ({failures.length})
+            </h2>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              disabled={jobActive}
+              onClick={() => void run(failures.map((f) => f.item_id))}
+            >
+              Retry all
+            </button>
+          </div>
           <div className="flex flex-col gap-2">
             {failures.map((f) => (
               <div key={f.item_id} className="card flex items-start justify-between gap-3 px-3 py-2 text-sm">

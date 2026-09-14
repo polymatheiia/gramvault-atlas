@@ -7,23 +7,37 @@ import type { Item, ItemListResponse, MediaFile } from '../types'
 const WINDOW_BEHIND = 1
 const WINDOW_AHEAD = 3
 
+/** `prefers-reduced-motion` is a per-viewer OS/browser setting, not a
+ * GramVault preference — reading it once at module load (rather than
+ * wiring a MediaQueryList listener) is fine here since a live toggle
+ * mid-session is not a scenario worth the extra plumbing. */
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return false
+  }
+}
+
 function FeedMedia({ item, active }: { item: Item; active: boolean }) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [muted, setMuted] = useState(true)
-  const [paused, setPaused] = useState(false)
+  // Autoplay is an accessibility hazard for reduced-motion users (audit
+  // finding UX-10) — start paused for them and never auto-play below.
+  const [paused, setPaused] = useState(prefersReducedMotion)
 
   const first = item.media_files[0] as MediaFile | undefined
 
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-    if (active && !paused) {
+    if (active && !paused && !prefersReducedMotion()) {
       v.play().catch(() => undefined)
     } else {
       v.pause()
       if (!active) {
         v.currentTime = 0
-        if (paused) setPaused(false)
+        if (paused && !prefersReducedMotion()) setPaused(false)
       }
     }
   }, [active, paused])
