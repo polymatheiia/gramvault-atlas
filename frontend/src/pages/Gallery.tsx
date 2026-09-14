@@ -4,6 +4,7 @@ import { api, isNotImplemented } from '../api/client'
 import { ItemCard } from '../components/ItemCard'
 import { filterSearch, itemSortOf, searchModeOf, UNCATEGORIZED, type SearchMode } from '../lib/gallery'
 import { useToast } from '../lib/toast'
+import type { Schemas } from '../api/schema'
 import type {
   Author,
   CategoryListResponse,
@@ -14,6 +15,77 @@ import type {
   SemanticSearchResponse,
   Tag,
 } from '../types'
+
+type Health = Schemas['HealthResponse']
+
+function formatRelative(iso: string | null | undefined): string {
+  if (!iso) return 'never'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleString()
+}
+
+/** First-run checklist (empty library) or a compact stats/next-step
+ * header (non-empty library), driven by the richer `/api/health` (audit
+ * finding UX-2). Rendered above the filter bar, not as a separate route —
+ * Gallery already owns "/" and the checklist only matters until the
+ * first import lands. */
+function HomePanel({ health }: { health: Health | null }) {
+  if (!health) return null
+
+  if (health.item_count === 0) {
+    return (
+      <div className="card flex flex-col gap-3 px-5 py-4">
+        <h2 className="text-base font-semibold text-slate-100">Get started</h2>
+        <ul className="flex flex-col gap-1.5 text-sm">
+          <li className="flex items-center gap-2">
+            <span className={health.ollama_reachable ? 'text-emerald-400' : 'text-amber-400'}>
+              {health.ollama_reachable ? '✓' : '○'}
+            </span>
+            <span className="text-slate-300">
+              Ollama {health.ollama_reachable ? 'reachable' : 'not reachable — enrichment/chat need a local model'}
+            </span>
+          </li>
+          <li className="flex items-center gap-2">
+            <span className={health.ffmpeg_found ? 'text-emerald-400' : 'text-amber-400'}>
+              {health.ffmpeg_found ? '✓' : '○'}
+            </span>
+            <span className="text-slate-300">
+              ffmpeg {health.ffmpeg_found ? 'found' : 'not found — video keyframes/thumbnails need it on PATH'}
+            </span>
+          </li>
+        </ul>
+        <div className="flex gap-2">
+          <Link to="/import" className="btn-primary no-underline">
+            Import a ZIP export
+          </Link>
+          <Link to="/pull" className="btn-secondary no-underline">
+            Pull from Instagram
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const enrichedPct = Math.round((health.enriched_count / health.item_count) * 100)
+  const categorizedPct = Math.round((health.categorized_count / health.item_count) * 100)
+
+  return (
+    <div className="card flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3 text-sm text-slate-300">
+      <span>
+        <span className="font-semibold text-slate-100">{health.item_count}</span> items
+      </span>
+      <span>{enrichedPct}% enriched</span>
+      <span>{categorizedPct}% categorized</span>
+      {health.needs_review_count > 0 && (
+        <Link to="/categorize" className="text-accent no-underline hover:underline">
+          {health.needs_review_count} need review
+        </Link>
+      )}
+      <span className="text-xs text-slate-500">Last pull: {formatRelative(health.last_pull_at)}</span>
+    </div>
+  )
+}
 
 const MEDIA_TYPES: MediaType[] = ['photo', 'video', 'reel', 'carousel']
 const PAGE_SIZE = 48
@@ -72,6 +144,7 @@ export function Gallery() {
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null)
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkTagInput, setBulkTagInput] = useState('')
+  const [health, setHealth] = useState<Health | null>(null)
 
   useEffect(() => {
     try {
@@ -94,6 +167,10 @@ export function Gallery() {
       .get<CategoryListResponse>('/api/library/categories')
       .then(setCategoryData)
       .catch(() => setCategoryData(null))
+    api
+      .get<Health>('/api/health')
+      .then(setHealth)
+      .catch(() => setHealth(null))
   }, [])
 
   // Keep the search box in sync when navigation changes the URL directly.
@@ -342,6 +419,7 @@ export function Gallery() {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-6">
+      {!hasFilters && <HomePanel health={health} />}
       <div className="flex flex-col gap-3">
         <div className="flex gap-2">
           <input

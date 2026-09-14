@@ -1659,6 +1659,32 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthResponse */
+        HealthResponse: {
+            /** Categorized Count */
+            categorized_count: number;
+            /** Disk Free Bytes */
+            disk_free_bytes?: number | null;
+            /** Enriched Count */
+            enriched_count: number;
+            /** Ffmpeg Found */
+            ffmpeg_found: boolean;
+            /** Item Count */
+            item_count: number;
+            /** Last Pull At */
+            last_pull_at?: string | null;
+            /** Needs Review Count */
+            needs_review_count: number;
+            /** Ollama Reachable */
+            ollama_reachable: boolean;
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Status
+             * @default ok
+             */
+            status: string;
+        };
         /** ImportJob */
         ImportJob: {
             /** Created At */
@@ -3162,9 +3188,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };

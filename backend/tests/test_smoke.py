@@ -19,7 +19,13 @@ def test_package_imports() -> None:
 def test_health_check(client: TestClient) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["item_count"] == 0
+    assert body["needs_review_count"] == 0
+    assert isinstance(body["schema_version"], int)
+    assert isinstance(body["ollama_reachable"], bool)
+    assert isinstance(body["ffmpeg_found"], bool)
 
 
 def test_db_schema_applies(tmp_db_conn) -> None:

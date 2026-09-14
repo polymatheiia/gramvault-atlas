@@ -39,6 +39,7 @@ from gramvault.api import (
 )
 from gramvault.api.csrf import CrossSiteGuard
 from gramvault.api.headers import SafeMedia, SecurityHeadersMiddleware
+from gramvault.api.routes_system import HealthResponse, build_health_response
 from gramvault.config import Config, get_config
 from gramvault.db.session import get_connection, init_db
 
@@ -159,9 +160,9 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(routes_export.router)
     app.include_router(routes_system.router)
 
-    @app.get("/api/health", tags=["meta"])
-    def health() -> dict[str, str]:
-        return {"status": "ok"}
+    @app.get("/api/health", tags=["meta"], response_model=HealthResponse)
+    async def health() -> HealthResponse:
+        return await build_health_response(config)
 
     # --- serve imported media (photos/videos/keyframes) referenced by
     # MediaFile.file_path, which the frontend resolves via mediaUrl() as

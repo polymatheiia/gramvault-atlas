@@ -1421,6 +1421,76 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HealthResponse": {
+        "properties": {
+          "categorized_count": {
+            "title": "Categorized Count",
+            "type": "integer"
+          },
+          "disk_free_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disk Free Bytes"
+          },
+          "enriched_count": {
+            "title": "Enriched Count",
+            "type": "integer"
+          },
+          "ffmpeg_found": {
+            "title": "Ffmpeg Found",
+            "type": "boolean"
+          },
+          "item_count": {
+            "title": "Item Count",
+            "type": "integer"
+          },
+          "last_pull_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Pull At"
+          },
+          "needs_review_count": {
+            "title": "Needs Review Count",
+            "type": "integer"
+          },
+          "ollama_reachable": {
+            "title": "Ollama Reachable",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "status": {
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ollama_reachable",
+          "item_count",
+          "enriched_count",
+          "categorized_count",
+          "needs_review_count",
+          "schema_version",
+          "ffmpeg_found"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
       "ImportJob": {
         "properties": {
           "created_at": {
@@ -4446,11 +4516,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Health Api Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             },

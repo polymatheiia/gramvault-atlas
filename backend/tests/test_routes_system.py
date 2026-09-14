@@ -50,3 +50,24 @@ def test_system_info_shape(client: TestClient) -> None:
 def test_system_info_never_leaks_token(client: TestClient) -> None:
     r = client.get("/api/system/info")
     assert "s3cr3t" not in r.text
+
+
+def test_health_reflects_library_state(client: TestClient) -> None:
+    from gramvault.api.deps import get_config_dependency
+    from gramvault.db.session import session_scope
+
+    # Seed through the same config the app's dependency override resolves
+    # to, so it lands in the same tmp_path DB the running client sees.
+    app_config = client.app.dependency_overrides[get_config_dependency]()
+    with session_scope(app_config) as conn:
+        author_id = conn.execute("INSERT INTO authors (username) VALUES ('acc') RETURNING id").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO items (media_type, caption, author_id, enrichment_status) "
+            "VALUES ('reel', 'x', ?, 'done')",
+            (author_id,),
+        )
+
+    r = client.get("/api/health")
+    body = r.json()
+    assert body["item_count"] == 1
+    assert body["enriched_count"] == 1

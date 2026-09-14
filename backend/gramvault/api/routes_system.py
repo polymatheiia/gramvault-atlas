@@ -8,11 +8,18 @@ covers "is one configured").
 
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
+from gramvault.ai import ollama_client
+from gramvault.ai.keyframes import ffmpeg_available
 from gramvault.api.deps import get_config_dependency, get_config_path_dependency
 from gramvault.config import Config
+from gramvault.db.session import get_connection, schema_version as get_schema_version
+from gramvault.models.schemas import JobKind, JobStatus
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -58,4 +65,67 @@ def system_info(
         library_dir=str(config.resolved_library_dir),
         db_path=str(config.resolved_db_path),
         chroma_dir=str(config.resolved_chroma_dir),
+    )
+
+
+# --- health (UX-2 — the Home page's onboarding/health panel) --------------
+
+
+class HealthResponse(BaseModel):
+    status: str = "ok"
+    ollama_reachable: bool
+    item_count: int
+    enriched_count: int
+    categorized_count: int
+    needs_review_count: int
+    last_pull_at: str | None = None
+    schema_version: int
+    ffmpeg_found: bool
+    disk_free_bytes: int | None = None
+
+
+def _disk_free_bytes(path: Path) -> int | None:
+    for candidate in (path, path.parent, Path.cwd()):
+        try:
+            return shutil.disk_usage(candidate).free
+        except OSError:
+            continue
+    return None
+
+
+async def build_health_response(config: Config) -> HealthResponse:
+    ollama_reachable = await ollama_client.check_health(config)
+    conn = get_connection(config)
+    try:
+        item_count = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        enriched_count = conn.execute(
+            "SELECT COUNT(*) FROM items WHERE enrichment_status = 'done'"
+        ).fetchone()[0]
+        categorized_count = conn.execute(
+            "SELECT COUNT(*) FROM items WHERE category_id IS NOT NULL"
+        ).fetchone()[0]
+        needs_review_count = conn.execute(
+            "SELECT COUNT(*) FROM items WHERE category_id IS NOT NULL "
+            "AND COALESCE(category_source, '') != 'manual' "
+            "AND COALESCE(category_confidence, 0) < 0.6"
+        ).fetchone()[0]
+        last_pull_row = conn.execute(
+            "SELECT finished_at FROM jobs WHERE kind = ? AND status = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (JobKind.PULL.value, JobStatus.DONE.value),
+        ).fetchone()
+        sv = get_schema_version(conn)
+    finally:
+        conn.close()
+
+    return HealthResponse(
+        ollama_reachable=ollama_reachable,
+        item_count=item_count,
+        enriched_count=enriched_count,
+        categorized_count=categorized_count,
+        needs_review_count=needs_review_count,
+        last_pull_at=last_pull_row["finished_at"] if last_pull_row else None,
+        schema_version=sv,
+        ffmpeg_found=ffmpeg_available(),
+        disk_free_bytes=_disk_free_bytes(config.resolved_library_dir),
     )
