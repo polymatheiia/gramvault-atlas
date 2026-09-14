@@ -44,6 +44,12 @@ REVIEW_CONFIDENCE = 0.6
 # Rough token budget per LLM batch (chars // 4). Small enough for a 3B local
 # model's context, large enough to keep the request count sane.
 _BATCH_TOKEN_BUDGET = 6000
+# Reply budget per batch (R5): the old provider-side default of 4096 could
+# truncate a JSON object covering a full batch of items. A truncated reply
+# is detected via ChatResult.truncated and the batch is split in half and
+# retried rather than silently falling back to keyword guesses for the
+# whole batch.
+_REPLY_MAX_TOKENS = 8192
 
 _SYSTEM_PROMPT = (
     "You are a librarian sorting saved social-media posts into exactly one "
@@ -194,17 +200,43 @@ def _line_id(line: str) -> int:
     return int(line[1 : line.index(" ")])
 
 
-async def _ask(provider: Any, model: str, rubric: str, batch: list[str], *, retry: bool) -> str:
+async def _ask(provider: Any, model: str, rubric: str, batch: list[str], *, retry: bool) -> Any:
     content = f"{rubric}\n\nPosts:\n" + "\n".join(batch)
     if retry:
         content += "\n\nReturn ONLY the JSON object, no prose, no code fence."
-    return await provider.chat(
+    return await provider.complete(
         model,
         [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": content},
         ],
+        max_tokens=_REPLY_MAX_TOKENS,
+        json_mode=True,
     )
+
+
+async def _labels_for_batch(
+    provider: Any, model: str, rubric: str, batch: list[str]
+) -> dict[str, Any]:
+    """Parsed `{item_id: entry}` for one batch. A truncated reply (R5) is
+    resolved by splitting the batch in half and recursing rather than
+    dropping the whole batch to keyword guesses; a batch of one that's
+    still truncated is left for the caller's keyword fallback."""
+    result = await _ask(provider, model, rubric, batch, retry=False)
+    if result.truncated and len(batch) > 1:
+        mid = len(batch) // 2
+        left = await _labels_for_batch(provider, model, rubric, batch[:mid])
+        right = await _labels_for_batch(provider, model, rubric, batch[mid:])
+        return {**left, **right}
+    try:
+        return _parse_labels(result.text)
+    except (ValueError, json.JSONDecodeError):
+        pass
+    retry_result = await _ask(provider, model, rubric, batch, retry=True)
+    try:
+        return _parse_labels(retry_result.text)
+    except (ValueError, json.JSONDecodeError):
+        return {}
 
 
 async def llm_classify(
@@ -238,13 +270,7 @@ async def llm_classify(
     for batch in _batches(lines):
         if cancel_check and cancel_check():
             break
-        try:
-            parsed = _parse_labels(await _ask(provider, model, rubric, batch, retry=False))
-        except (ValueError, json.JSONDecodeError):
-            try:
-                parsed = _parse_labels(await _ask(provider, model, rubric, batch, retry=True))
-            except (ValueError, json.JSONDecodeError):
-                parsed = {}
+        parsed = await _labels_for_batch(provider, model, rubric, batch)
 
         for line in batch:
             item_id = _line_id(line)

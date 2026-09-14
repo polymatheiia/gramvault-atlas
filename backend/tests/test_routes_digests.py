@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from gramvault.ai.errors import ProviderNotReadyError
+from gramvault.ai.providers.base import ChatResult
 from gramvault.api import jobs
 from gramvault.config import Config
 from gramvault.db.session import session_scope
@@ -118,9 +119,9 @@ class TestCreate:
 
         provider = AsyncMock()
         provider.name = "ollama"
-        provider.chat.side_effect = [
-            json.dumps([{"title": "Dune", "author": "Herbert", "item_id": i1}]),
-            f"## Sci-fi\n- **Dune** — Herbert ([reel](https://x)) [[item:{i1}]]\n",
+        provider.complete.side_effect = [
+            ChatResult(text=json.dumps([{"title": "Dune", "author": "Herbert", "item_id": i1}])),
+            ChatResult(text=f"## Sci-fi\n- **Dune** — Herbert ([reel](https://x)) [[item:{i1}]]\n"),
         ]
 
         with patch(

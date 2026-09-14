@@ -10,6 +10,7 @@ serve it; the raise is a backstop.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -20,6 +21,7 @@ from gramvault.ai.errors import (
 )
 
 __all__ = [
+    "ChatResult",
     "Message",
     "Provider",
     "ProviderCapabilityError",
@@ -29,6 +31,24 @@ __all__ = [
 
 # A chat message: {"role": "system"|"user"|"assistant", "content": str}.
 Message = dict[str, str]
+
+
+@dataclass
+class ChatResult:
+    """A `complete()` reply, with the metadata `chat()` throws away.
+
+    `tokens_in`/`tokens_out` are the provider's own usage accounting when it
+    reports one (exact), else `None` — callers fall back to their own
+    char/4 estimate in that case. `truncated` is True when the provider cut
+    the reply off for hitting `max_tokens` (Anthropic `stop_reason ==
+    "max_tokens"`, OpenAI-compatible `finish_reason == "length"`, Ollama
+    `done_reason == "length"`) rather than for reaching a natural stop.
+    """
+
+    text: str
+    truncated: bool = False
+    tokens_in: int | None = None
+    tokens_out: int | None = None
 
 
 @runtime_checkable
@@ -50,6 +70,21 @@ class Provider(Protocol):
         ...
 
     async def chat(self, model: str, messages: list[Message]) -> str:
+        ...
+
+    async def complete(
+        self,
+        model: str,
+        messages: list[Message],
+        *,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> ChatResult:
+        """Like `chat()`, but for callers (classifier, digest) that need to
+        know whether the reply was truncated and how many tokens it cost.
+        `max_tokens` overrides the provider's default cap; `json_mode` is
+        best-effort (silently ignored where the backend has no such mode,
+        e.g. Anthropic) rather than a hard requirement."""
         ...
 
     def stream_chat(self, model: str, messages: list[Message]) -> AsyncIterator[str]:

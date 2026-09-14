@@ -278,6 +278,38 @@ async def chat_completion(
     return data.get("message", {}).get("content", "")
 
 
+async def chat_completion_full(
+    messages: list[dict[str, str]],
+    model: str | None = None,
+    config: Config | None = None,
+    *,
+    max_tokens: int | None = None,
+    json_mode: bool = False,
+) -> dict[str, Any]:
+    """Like `chat_completion()`, but returns the raw response dict instead
+    of just the text, so callers can read `done_reason` (`"length"` means
+    the reply was cut off at `num_predict`) and the `prompt_eval_count`
+    /`eval_count` token counts Ollama reports for local models too."""
+    config = config or get_config()
+    model = model or config.models.chat_model
+    payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+    if max_tokens is not None:
+        payload["options"] = {"num_predict": max_tokens}
+    if json_mode:
+        payload["format"] = "json"
+    try:
+        async with _client(config, timeout=120.0) as client:
+            resp = await client.post("/api/chat", json=payload)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.ConnectError as exc:
+        raise OllamaNotRunningError(config.ollama.host, exc) from exc
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise ModelNotPulledError(model) from exc
+        raise
+
+
 async def stream_chat(
     messages: list[dict[str, str]],
     model: str | None = None,

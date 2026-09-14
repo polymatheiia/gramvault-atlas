@@ -16,6 +16,7 @@ from gramvault.ai.classifier import (
     categorize_items,
     keyword_vote,
 )
+from gramvault.ai.providers.base import ChatResult
 from gramvault.config import Config
 from gramvault.db.session import DEFAULT_CATEGORIES, session_scope
 from gramvault.models.schemas import Author, Item, MediaFile, Tag
@@ -188,8 +189,8 @@ class TestCategorizeItems:
             item_id = _seed(conn, "an ambiguous caption the keywords will call other")
 
         fake_provider = AsyncMock()
-        fake_provider.chat.return_value = (
-            f'{{"{item_id}": {{"category": "astrology", "confidence": 0.82, "reason": "birth chart"}}}}'
+        fake_provider.complete.return_value = ChatResult(
+            text=f'{{"{item_id}": {{"category": "astrology", "confidence": 0.82, "reason": "birth chart"}}}}'
         )
         monkeypatch.setattr(
             classifier, "get_provider", lambda task, config=None: (fake_provider, "fake-model")
@@ -215,7 +216,7 @@ class TestCategorizeItems:
             item_id = _seed(conn, "gym workout, 5 sets of squats, leg day")
 
         fake_provider = AsyncMock()
-        fake_provider.chat.return_value = "I'm not able to help with that."
+        fake_provider.complete.return_value = ChatResult(text="I'm not able to help with that.")
         monkeypatch.setattr(
             classifier, "get_provider", lambda task, config=None: (fake_provider, "fake-model")
         )
@@ -242,3 +243,37 @@ class TestCategorizeItems:
         await categorize_items(ids, "keyword", tmp_config, progress_cb=lambda d, t: seen.append((d, t)))
 
         assert seen[-1] == (2, 2)
+
+    async def test_truncated_reply_splits_the_batch_instead_of_dropping_it(
+        self, tmp_config: Config, tmp_db_conn, monkeypatch
+    ) -> None:
+        """R5: a reply that hits max_tokens must not fall the whole batch
+        back to keyword guesses — split in half and retry each half."""
+        with session_scope(tmp_config) as conn:
+            id_a = _seed(conn, "an ambiguous caption the keywords will call other")
+            id_b = _seed(conn, "another ambiguous one, also other by keyword")
+
+        fake_provider = AsyncMock()
+        fake_provider.complete.side_effect = [
+            ChatResult(text="", truncated=True),  # full batch: truncated
+            ChatResult(text=f'{{"{id_a}": {{"category": "astrology", "confidence": 0.9}}}}'),
+            ChatResult(text=f'{{"{id_b}": {{"category": "recipes", "confidence": 0.9}}}}'),
+        ]
+        monkeypatch.setattr(
+            classifier, "get_provider", lambda task, config=None: (fake_provider, "fake-model")
+        )
+
+        summary = await categorize_items([id_a, id_b], "llm", tmp_config)
+
+        assert summary["llm"] == 2
+        assert fake_provider.complete.await_count == 3
+        with session_scope(tmp_config) as conn:
+            names = {
+                r["id"]: r["name"]
+                for r in conn.execute(
+                    "SELECT items.id AS id, categories.name AS name FROM items "
+                    "JOIN categories ON categories.id = items.category_id"
+                )
+            }
+        assert names[id_a] == "astrology"
+        assert names[id_b] == "recipes"

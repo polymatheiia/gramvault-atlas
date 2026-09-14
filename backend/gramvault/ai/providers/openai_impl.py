@@ -19,10 +19,12 @@ from pathlib import Path
 import httpx
 
 from gramvault.ai.providers.base import (
+    ChatResult,
     Message,
     ProviderError,
     ProviderNotReadyError,
 )
+from gramvault.ai.providers.retry import send_with_retry
 
 _DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
@@ -71,7 +73,9 @@ class OpenAICompatProvider:
         self._require_key()
         try:
             async with self._client(timeout=60.0) as client:
-                resp = await client.post("/embeddings", json={"model": model, "input": text})
+                resp = await send_with_retry(
+                    lambda: client.post("/embeddings", json={"model": model, "input": text})
+                )
                 self._raise_for_status(resp)
                 data = resp.json()
         except httpx.ConnectError as exc:
@@ -92,26 +96,66 @@ class OpenAICompatProvider:
                 ],
             }
         ]
-        return await self._chat_request(model, messages)
+        return (await self._chat_request(model, messages)).text
 
     async def chat(self, model: str, messages: list[Message]) -> str:
         self._require_key()
-        return await self._chat_request(model, messages)
+        return (await self._chat_request(model, messages)).text
 
-    async def _chat_request(self, model: str, messages: list) -> str:
+    async def complete(
+        self,
+        model: str,
+        messages: list[Message],
+        *,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> ChatResult:
+        self._require_key()
+        return await self._chat_request(model, messages, max_tokens=max_tokens, json_mode=json_mode)
+
+    async def _chat_request(
+        self,
+        model: str,
+        messages: list,
+        *,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> ChatResult:
+        payload: dict = {"model": model, "messages": messages}
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         try:
             async with self._client() as client:
-                resp = await client.post(
-                    "/chat/completions", json={"model": model, "messages": messages}
+                resp = await send_with_retry(
+                    lambda: client.post("/chat/completions", json=payload)
                 )
+                if json_mode and resp.status_code == 400:
+                    # Best-effort: many OpenAI-compatible backends
+                    # (llama.cpp, LM Studio, vLLM, older Ollama /v1) 400 on
+                    # an unrecognised response_format. Retry once without
+                    # it rather than hard-failing the request.
+                    payload.pop("response_format", None)
+                    resp = await send_with_retry(
+                        lambda: client.post("/chat/completions", json=payload)
+                    )
                 self._raise_for_status(resp)
                 data = resp.json()
         except httpx.ConnectError as exc:
             raise ProviderNotReadyError(f"Could not reach {self.base_url}: {exc}") from exc
         try:
-            return data["choices"][0]["message"]["content"] or ""
+            choice = data["choices"][0]
+            text = choice["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:  # pragma: no cover - defensive
             raise ProviderError(f"Unexpected chat response shape: {data}") from exc
+        usage = data.get("usage") or {}
+        return ChatResult(
+            text=text,
+            truncated=choice.get("finish_reason") == "length",
+            tokens_in=usage.get("prompt_tokens"),
+            tokens_out=usage.get("completion_tokens"),
+        )
 
     async def stream_chat(self, model: str, messages: list[Message]) -> AsyncIterator[str]:
         self._require_key()

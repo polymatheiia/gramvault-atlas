@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 import respx
@@ -130,6 +131,59 @@ class TestOpenAIProvider:
         with pytest.raises(ProviderNotReadyError):
             await OpenAICompatProvider(api_key="bad").embed("text-embedding-3-small", "x")
 
+    @respx.mock
+    @pytest.mark.anyio
+    async def test_complete_reports_truncation_and_usage(self) -> None:
+        respx.post("https://api.openai.com/v1/chat/completions").mock(
+            return_value=Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "cut off"}, "finish_reason": "length"}
+                    ],
+                    "usage": {"prompt_tokens": 42, "completion_tokens": 7},
+                },
+            )
+        )
+        result = await OpenAICompatProvider(api_key="sk-x").complete(
+            "gpt-4o", [{"role": "user", "content": "hi"}], max_tokens=8
+        )
+        assert result.text == "cut off"
+        assert result.truncated is True
+        assert (result.tokens_in, result.tokens_out) == (42, 7)
+
+    @respx.mock
+    @pytest.mark.anyio
+    async def test_json_mode_falls_back_when_backend_rejects_response_format(self) -> None:
+        route = respx.post("http://localhost:8080/v1/chat/completions")
+        route.side_effect = [
+            Response(400, json={"error": "unknown field response_format"}),
+            Response(200, json={"choices": [{"message": {"content": "{}"}}]}),
+        ]
+        result = await OpenAICompatProvider(
+            api_key="sk-x", base_url="http://localhost:8080/v1"
+        ).complete("local-model", [{"role": "user", "content": "hi"}], json_mode=True)
+        assert result.text == "{}"
+        assert route.call_count == 2
+        assert "response_format" not in json.loads(route.calls[1].request.content)
+
+    @respx.mock
+    @pytest.mark.anyio
+    async def test_retries_on_429_then_succeeds(self, monkeypatch) -> None:
+        from gramvault.ai.providers import retry as retry_mod
+
+        monkeypatch.setattr(retry_mod.asyncio, "sleep", AsyncMock())
+        route = respx.post("https://api.openai.com/v1/chat/completions")
+        route.side_effect = [
+            Response(429, headers={"retry-after": "0"}),
+            Response(200, json={"choices": [{"message": {"content": "ok"}}]}),
+        ]
+        out = await OpenAICompatProvider(api_key="sk-x").chat(
+            "gpt-4o", [{"role": "user", "content": "hi"}]
+        )
+        assert out == "ok"
+        assert route.call_count == 2
+
 
 class TestAnthropicProvider:
     @pytest.mark.anyio
@@ -162,3 +216,40 @@ class TestAnthropicProvider:
         respx.post("https://api.anthropic.com/v1/messages").mock(return_value=Response(403))
         with pytest.raises(ProviderNotReadyError):
             await AnthropicProvider(api_key="bad").chat("claude-sonnet-5", [{"role": "user", "content": "x"}])
+
+    @respx.mock
+    @pytest.mark.anyio
+    async def test_complete_reports_truncation_and_usage(self) -> None:
+        respx.post("https://api.anthropic.com/v1/messages").mock(
+            return_value=Response(
+                200,
+                json={
+                    "content": [{"type": "text", "text": "cut off"}],
+                    "stop_reason": "max_tokens",
+                    "usage": {"input_tokens": 100, "output_tokens": 8192},
+                },
+            )
+        )
+        result = await AnthropicProvider(api_key="sk-ant").complete(
+            "claude-sonnet-5", [{"role": "user", "content": "q?"}], max_tokens=8192
+        )
+        assert result.text == "cut off"
+        assert result.truncated is True
+        assert (result.tokens_in, result.tokens_out) == (100, 8192)
+
+    @respx.mock
+    @pytest.mark.anyio
+    async def test_retries_on_503_then_succeeds(self, monkeypatch) -> None:
+        from gramvault.ai.providers import retry as retry_mod
+
+        monkeypatch.setattr(retry_mod.asyncio, "sleep", AsyncMock())
+        route = respx.post("https://api.anthropic.com/v1/messages")
+        route.side_effect = [
+            Response(503),
+            Response(200, json={"content": [{"type": "text", "text": "ok"}]}),
+        ]
+        out = await AnthropicProvider(api_key="sk-ant").chat(
+            "claude-sonnet-5", [{"role": "user", "content": "q?"}]
+        )
+        assert out == "ok"
+        assert route.call_count == 2

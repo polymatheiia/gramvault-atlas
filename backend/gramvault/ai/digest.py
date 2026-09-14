@@ -49,14 +49,25 @@ _CHARS_PER_TOKEN = 4
 # more headroom but the extra request count is cheap either way.
 _EXTRACT_BUDGET_TOKENS = 3000
 
+# Reply budget per extract/reduce call (R5): the old provider-side default
+# of 4096 could truncate a reduce over hundreds of entries. Extract batches
+# additionally split in half and retry on a truncated reply, same as
+# ai/classifier.py's _labels_for_batch.
+_REPLY_MAX_TOKENS = 8192
+
 # Rough USD per 1M tokens (in, out), 2026 public list prices. Best-effort —
-# used only for the pre-flight estimate and the stored manifest.
-_PRICE_PER_MTOK: dict[str, tuple[float, float]] = {
+# used only for the pre-flight estimate and the stored manifest, and only
+# when a provider doesn't report exact usage. Keyed by provider as a
+# fallback; `_PRICE_PER_MTOK_BY_MODEL_PREFIX` lets a specific model (e.g. a
+# cheaper/pricier one on the same provider) override that (R14 — the flat
+# per-provider table charged Haiku and Sonnet the same rate).
+_PRICE_PER_MTOK_BY_PROVIDER: dict[str, tuple[float, float]] = {
     "anthropic": (3.0, 15.0),
     "openai": (2.5, 10.0),
     "openrouter": (2.5, 10.0),
     "ollama": (0.0, 0.0),
 }
+_PRICE_PER_MTOK_BY_MODEL_PREFIX: dict[str, tuple[float, float]] = {}
 
 
 class DigestError(RuntimeError):
@@ -263,6 +274,11 @@ _EXTRACT_SYSTEM = (
 async def _extract_batch(
     provider: Any, model: str, template: DigestTemplate, batch: list[str], valid_ids: set[int]
 ) -> tuple[list[dict], int, int]:
+    """Extract structured entries from one batch. A truncated reply (R5) is
+    handled by splitting the batch in half and recursing — same strategy as
+    `ai/classifier.py`'s `_labels_for_batch` — rather than losing the whole
+    batch's entries; a batch of one that's still truncated returns whatever
+    parses (or nothing)."""
     user = (
         f"{template.extract_prompt}\n\n"
         f"Return a JSON array shaped like:\n{template.schema_hint}\n\n"
@@ -272,18 +288,35 @@ async def _extract_batch(
         {"role": "system", "content": _EXTRACT_SYSTEM},
         {"role": "user", "content": user},
     ]
-    reply = await provider.chat(model, messages)
-    tokens_in = estimate_tokens(_EXTRACT_SYSTEM + user)
-    tokens_out = estimate_tokens(reply)
-    try:
-        rows = _parse_json_array(reply)
-    except (ValueError, json.JSONDecodeError):
-        reply = await provider.chat(
-            model, [*messages, {"role": "user", "content": "Return ONLY the JSON array."}]
+    result = await provider.complete(
+        model, messages, max_tokens=_REPLY_MAX_TOKENS, json_mode=True
+    )
+    if result.truncated and len(batch) > 1:
+        mid = len(batch) // 2
+        left_rows, left_in, left_out = await _extract_batch(
+            provider, model, template, batch[:mid], valid_ids
         )
-        tokens_out += estimate_tokens(reply)
+        right_rows, right_in, right_out = await _extract_batch(
+            provider, model, template, batch[mid:], valid_ids
+        )
+        return left_rows + right_rows, left_in + right_in, left_out + right_out
+
+    tokens_in = (
+        result.tokens_in if result.tokens_in is not None else estimate_tokens(_EXTRACT_SYSTEM + user)
+    )
+    tokens_out = result.tokens_out if result.tokens_out is not None else estimate_tokens(result.text)
+    try:
+        rows = _parse_json_array(result.text)
+    except (ValueError, json.JSONDecodeError):
+        retry = await provider.complete(
+            model,
+            [*messages, {"role": "user", "content": "Return ONLY the JSON array."}],
+            max_tokens=_REPLY_MAX_TOKENS,
+            json_mode=True,
+        )
+        tokens_out += retry.tokens_out if retry.tokens_out is not None else estimate_tokens(retry.text)
         try:
-            rows = _parse_json_array(reply)
+            rows = _parse_json_array(retry.text)
         except (ValueError, json.JSONDecodeError):
             return [], tokens_in, tokens_out
 
@@ -317,10 +350,17 @@ _REDUCE_BUDGET_TOKENS = 6000
 
 
 async def _reduce_call(provider: Any, model: str, system: str, user: str) -> tuple[str, int, int]:
-    reply = await provider.chat(
-        model, [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    # No batch to split here (a single merged document) — a truncated reduce
+    # reply is a known limitation of this phase; _REPLY_MAX_TOKENS keeps it
+    # rare rather than eliminating it (R5).
+    result = await provider.complete(
+        model,
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        max_tokens=_REPLY_MAX_TOKENS,
     )
-    return reply.strip(), estimate_tokens(system + user), estimate_tokens(reply)
+    tokens_in = result.tokens_in if result.tokens_in is not None else estimate_tokens(system + user)
+    tokens_out = result.tokens_out if result.tokens_out is not None else estimate_tokens(result.text)
+    return result.text.strip(), tokens_in, tokens_out
 
 
 def _chunk_rows(rows: list[dict], budget_tokens: int) -> list[list[dict]]:
@@ -414,8 +454,13 @@ def _postprocess(markdown: str, items_by_id: dict[int, Item]) -> str:
     return "\n".join(out_lines).strip() + "\n"
 
 
-def cost_estimate(provider_name: str, tokens_in: int, tokens_out: int) -> float | None:
-    price = _PRICE_PER_MTOK.get(provider_name.lower())
+def cost_estimate(
+    provider_name: str, model: str, tokens_in: int, tokens_out: int
+) -> float | None:
+    price = next(
+        (p for prefix, p in _PRICE_PER_MTOK_BY_MODEL_PREFIX.items() if model.startswith(prefix)),
+        None,
+    ) or _PRICE_PER_MTOK_BY_PROVIDER.get(provider_name.lower())
     if price is None:
         return None
     return round(tokens_in / 1e6 * price[0] + tokens_out / 1e6 * price[1], 4)
@@ -452,7 +497,7 @@ async def preflight(
         batches=len(batches),
         tokens_in=tokens_in,
         tokens_out=tokens_out,
-        cost_estimate=cost_estimate(provider.name, tokens_in, tokens_out),
+        cost_estimate=cost_estimate(provider.name, model, tokens_in, tokens_out),
         provider=provider.name,
         model=model,
     )
@@ -513,7 +558,7 @@ async def run_digest(
     if progress_cb:
         progress_cb(total_steps, total_steps)
 
-    cost = cost_estimate(provider.name, tokens_in, tokens_out)
+    cost = cost_estimate(provider.name, model, tokens_in, tokens_out)
     with session_scope(config) as conn:
         conn.execute(
             "UPDATE digests SET status = 'done', markdown = ?, template_version = ?, "

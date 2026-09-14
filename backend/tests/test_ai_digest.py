@@ -20,6 +20,7 @@ from gramvault.ai.digest import (
     run_digest,
     select_items,
 )
+from gramvault.ai.providers.base import ChatResult
 from gramvault.config import Config
 from gramvault.db.session import session_scope
 from gramvault.models.schemas import Author, Item, MediaFile
@@ -124,16 +125,17 @@ class TestReduce:
         )
         rows = [{"note": "x " * 400, "item_id": i} for i in range(60)]  # ~12k tokens
 
-        async def fake_chat(_model, messages):
+        async def fake_complete(_model, messages, **_kwargs):
             user = messages[-1]["content"]
-            return "## merged\n- a [[item:1]]\n" if "Fragments to merge" in user else "## chunk\n"
+            text = "## merged\n- a [[item:1]]\n" if "Fragments to merge" in user else "## chunk\n"
+            return ChatResult(text=text)
 
         provider = AsyncMock()
-        provider.chat.side_effect = fake_chat
+        provider.complete.side_effect = fake_complete
         markdown, t_in, t_out = await _reduce(provider, "m", template, "d", rows)
 
         assert "merged" in markdown
-        assert provider.chat.await_count >= 3  # >=2 chunk reduces + 1 merge
+        assert provider.complete.await_count >= 3  # >=2 chunk reduces + 1 merge
         assert t_in > 0 and t_out > 0
 
 
@@ -197,15 +199,19 @@ class TestRunDigest:
         provider.name = "ollama"
         # The two short items fit in one extract batch -> one extract call,
         # then the reduce call.
-        provider.chat.side_effect = [
-            json.dumps(
-                [
-                    {"title": "Dune", "author": "Herbert", "item_id": i1},
-                    {"title": "Neuromancer", "author": "Gibson", "item_id": i2},
-                ]
+        provider.complete.side_effect = [
+            ChatResult(
+                text=json.dumps(
+                    [
+                        {"title": "Dune", "author": "Herbert", "item_id": i1},
+                        {"title": "Neuromancer", "author": "Gibson", "item_id": i2},
+                    ]
+                )
             ),
-            f"## Sci-fi\n- **Dune** — Herbert [[item:{i1}]]\n"
-            f"- **Neuromancer** — Gibson [[item:{i2}]]\n",
+            ChatResult(
+                text=f"## Sci-fi\n- **Dune** — Herbert [[item:{i1}]]\n"
+                f"- **Neuromancer** — Gibson [[item:{i2}]]\n"
+            ),
         ]
         monkeypatch.setattr(
             digest_engine, "get_provider", lambda task, config=None: (provider, "fake-model")
@@ -236,7 +242,7 @@ class TestRunDigest:
 
         provider = AsyncMock()
         provider.name = "ollama"
-        provider.chat.return_value = "[]"
+        provider.complete.return_value = ChatResult(text="[]")
         monkeypatch.setattr(
             digest_engine, "get_provider", lambda task, config=None: (provider, "m")
         )

@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 from gramvault.ai import ollama_client
-from gramvault.ai.providers.base import Message
+from gramvault.ai.providers.base import ChatResult, Message
 from gramvault.config import Config
 
 
@@ -35,6 +35,28 @@ class OllamaProvider:
 
     async def chat(self, model: str, messages: list[Message]) -> str:
         return await ollama_client.chat_completion(messages, model=model, config=self._config)
+
+    async def complete(
+        self,
+        model: str,
+        messages: list[Message],
+        *,
+        max_tokens: int | None = None,
+        json_mode: bool = False,
+    ) -> ChatResult:
+        data = await ollama_client.chat_completion_full(
+            messages,
+            model=model,
+            config=self._config,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+        return ChatResult(
+            text=data.get("message", {}).get("content", ""),
+            truncated=data.get("done_reason") == "length",
+            tokens_in=data.get("prompt_eval_count"),
+            tokens_out=data.get("eval_count"),
+        )
 
     def stream_chat(self, model: str, messages: list[Message]) -> AsyncIterator[str]:
         return ollama_client.stream_chat(messages, model=model, config=self._config)

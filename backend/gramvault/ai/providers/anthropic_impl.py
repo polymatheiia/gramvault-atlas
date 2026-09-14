@@ -15,15 +15,20 @@ from pathlib import Path
 import httpx
 
 from gramvault.ai.providers.base import (
+    ChatResult,
     Message,
     ProviderCapabilityError,
     ProviderError,
     ProviderNotReadyError,
 )
+from gramvault.ai.providers.retry import send_with_retry
 
 _DEFAULT_BASE_URL = "https://api.anthropic.com"
 _API_VERSION = "2023-06-01"
-_DEFAULT_MAX_TOKENS = 4096
+# R5: the old hard-coded 4096 silently truncated large categorize/digest
+# batches. This is only the *default* now — classifier/digest pass their
+# own budget via complete(max_tokens=...).
+_DEFAULT_MAX_TOKENS = 8192
 
 
 class AnthropicProvider:
@@ -94,30 +99,60 @@ class AnthropicProvider:
             },
             {"type": "text", "text": prompt},
         ]
-        return await self._messages(model, None, [{"role": "user", "content": content}])
+        return (await self._messages(model, None, [{"role": "user", "content": content}])).text
 
     async def chat(self, model: str, messages: list[Message]) -> str:
         self._require_key()
         system, rest = self._split_system(messages)
-        return await self._messages(model, system, rest)
+        return (await self._messages(model, system, rest)).text
 
-    async def _messages(self, model: str, system: str | None, messages: list[dict]) -> str:
-        body: dict = {"model": model, "max_tokens": _DEFAULT_MAX_TOKENS, "messages": messages}
+    async def complete(
+        self,
+        model: str,
+        messages: list[Message],
+        *,
+        max_tokens: int | None = None,
+        json_mode: bool = False,  # noqa: ARG002 - Anthropic has no native JSON mode
+    ) -> ChatResult:
+        self._require_key()
+        system, rest = self._split_system(messages)
+        return await self._messages(model, system, rest, max_tokens=max_tokens)
+
+    async def _messages(
+        self,
+        model: str,
+        system: str | None,
+        messages: list[dict],
+        *,
+        max_tokens: int | None = None,
+    ) -> ChatResult:
+        body: dict = {
+            "model": model,
+            "max_tokens": max_tokens or _DEFAULT_MAX_TOKENS,
+            "messages": messages,
+        }
         if system:
             body["system"] = system
         try:
             async with self._client() as client:
-                resp = await client.post("/v1/messages", json=body)
+                resp = await send_with_retry(lambda: client.post("/v1/messages", json=body))
                 self._raise_for_status(resp)
                 data = resp.json()
         except httpx.ConnectError as exc:
             raise ProviderNotReadyError(f"Could not reach {self.base_url}: {exc}") from exc
         try:
-            return "".join(
+            text = "".join(
                 block["text"] for block in data["content"] if block.get("type") == "text"
             )
         except (KeyError, TypeError) as exc:  # pragma: no cover - defensive
             raise ProviderError(f"Unexpected Anthropic response shape: {data}") from exc
+        usage = data.get("usage") or {}
+        return ChatResult(
+            text=text,
+            truncated=data.get("stop_reason") == "max_tokens",
+            tokens_in=usage.get("input_tokens"),
+            tokens_out=usage.get("output_tokens"),
+        )
 
     async def stream_chat(self, model: str, messages: list[Message]) -> AsyncIterator[str]:
         self._require_key()
