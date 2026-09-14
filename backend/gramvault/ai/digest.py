@@ -20,6 +20,7 @@ URLs.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import sqlite3
@@ -554,7 +555,10 @@ async def run_digest(
     markdown, r_in, r_out = await _reduce(provider, model, template, name, entries)
     tokens_in += r_in
     tokens_out += r_out
-    markdown = _postprocess(markdown, items_by_id)
+    # R10: line-by-line regex rewriting over a reduce spanning hundreds of
+    # entries is real CPU time; pure function over already-fetched data, so
+    # safe off-thread.
+    markdown = await asyncio.to_thread(_postprocess, markdown, items_by_id)
     if progress_cb:
         progress_cb(total_steps, total_steps)
 

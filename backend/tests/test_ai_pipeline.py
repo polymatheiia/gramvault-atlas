@@ -575,6 +575,28 @@ class TestProcessItems:
             await pipeline.process_items([], config=tmp_config)
         mock_process.assert_not_awaited()
 
+    @pytest.mark.anyio
+    async def test_reindexes_fts_on_a_worker_thread_without_crashing(
+        self, tmp_config: Config
+    ) -> None:
+        """R10: the FTS refresh at the end of a batch now runs via
+        asyncio.to_thread. This must not raise (a naive move would hit
+        sqlite3's "objects created in a thread can only be used in that
+        same thread" if it reused a connection from the caller's thread —
+        session_scope() opens its own instead) and must actually leave the
+        item searchable afterward."""
+        with session_scope(tmp_config) as conn:
+            item_id = _insert_item(conn, caption="a very particular searchable phrase")
+
+        with patch.object(pipeline, "process_item", new_callable=AsyncMock):
+            await pipeline.process_items([item_id], config=tmp_config)
+
+        with session_scope(tmp_config) as conn:
+            row = conn.execute(
+                "SELECT rowid FROM items_fts WHERE items_fts MATCH 'particular'"
+            ).fetchone()
+        assert row is not None and row["rowid"] == item_id
+
 
 class TestResolveTargetItemIds:
     def test_explicit_ids_are_returned_verbatim(self, tmp_db_conn: sqlite3.Connection) -> None:

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from gramvault.api.deps import get_config_dependency
 from gramvault.chat import fts
+from gramvault.chat.retrieval import fetch_items
 from gramvault.config import Config
 from gramvault.db.session import session_scope
 from gramvault.models.schemas import (
@@ -281,15 +282,14 @@ def _parse_id_csv(raw: str) -> list[int]:
 
 
 def _items_by_ids(conn: sqlite3.Connection, ids: list[int]) -> list[Item]:
-    """Full `Item`s for `ids`, returned in the given order."""
+    """Full `Item`s for `ids`, returned in the given order. Batched through
+    `chat.retrieval.fetch_items` (3 queries total for however many ids)
+    rather than one `_row_to_item` (2 more queries each) per item — a
+    48-item gallery page used to issue ~100 queries for this (R8)."""
     if not ids:
         return []
-    placeholders = ",".join("?" * len(ids))
-    rows = conn.execute(
-        f"{_ITEM_SELECT} WHERE items.id IN ({placeholders})", ids
-    ).fetchall()
-    by_id = {row["id"]: row for row in rows}
-    return [_row_to_item(conn, by_id[i]) for i in ids if i in by_id]
+    by_id = fetch_items(conn, ids)
+    return [by_id[i] for i in ids if i in by_id]
 
 
 @router.get("/item-ids", response_model=ItemIdListResponse)

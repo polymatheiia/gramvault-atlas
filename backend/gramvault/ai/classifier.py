@@ -17,6 +17,7 @@ is never touched.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -143,6 +144,12 @@ def keyword_vote(item: Item, category_names: Collection[str]) -> CategoryResult:
     if runner_score > 0:
         reason += f" (over {runner_up})"
     return CategoryResult(top, confidence, reason, "keyword")
+
+
+def _keyword_vote_all(
+    items: list[Item], category_names: Collection[str]
+) -> dict[int, CategoryResult]:
+    return {item.id: keyword_vote(item, category_names) for item in items}
 
 
 # --- pass 2: LLM re-label --------------------------------------------------
@@ -332,7 +339,12 @@ async def categorize_items(
     ]
     skipped_manual = len(item_ids) - len(items)
 
-    keyword_guesses = {item.id: keyword_vote(item, category_names) for item in items}
+    # R10: keyword_vote is pure CPU (regex/string scoring per item, no I/O)
+    # — over a backfilled library's worth of items (thousands) that's real
+    # time on the event loop, blocking every other request/job's progress
+    # polling for the duration. Off-thread since it touches nothing shared
+    # (each Item is independent, category_names is read-only here).
+    keyword_guesses = await asyncio.to_thread(_keyword_vote_all, items, category_names)
 
     if method == "keyword":
         final = dict(keyword_guesses)

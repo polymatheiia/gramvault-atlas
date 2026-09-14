@@ -318,6 +318,7 @@ def fetch_items(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, Item
         FROM item_tags it
         JOIN tags t ON t.id = it.tag_id
         WHERE it.item_id IN ({placeholders})
+        ORDER BY t.name
         """,
         item_ids,
     ).fetchall()

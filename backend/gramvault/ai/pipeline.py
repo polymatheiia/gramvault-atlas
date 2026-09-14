@@ -481,12 +481,21 @@ async def process_items(
             progress_cb(index + 1, total)
 
     # Enrichment just rewrote transcripts / vision captions / OCR text —
-    # refresh the FTS keyword index for the batch (best-effort).
+    # refresh the FTS keyword index for the batch (best-effort). Off the
+    # event loop (R10): the DELETE + INSERT...SELECT rebuilds every one of
+    # this batch's rows (each with a GROUP_CONCAT over its tags/transcripts
+    # /captions), real synchronous SQLite time for a large batch. Runs in
+    # its own thread with its own connection — session_scope() opens a
+    # fresh one, so there's no cross-thread sqlite3.Connection use.
     try:
-        with session_scope(config) as conn:
-            fts.reindex(conn, list(item_ids))
+        await asyncio.to_thread(_reindex_batch, config, list(item_ids))
     except Exception:  # noqa: BLE001 - never fail a finished batch on index upkeep
         logger.warning("process_items: FTS reindex failed", exc_info=True)
+
+
+def _reindex_batch(config: Config, item_ids: list[int]) -> None:
+    with session_scope(config) as conn:
+        fts.reindex(conn, item_ids)
 
 
 # --- queue resolution helpers (used by routes_enrich.py) -----------------------

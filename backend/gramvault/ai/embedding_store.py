@@ -33,6 +33,14 @@ from gramvault.config import Config, get_config
 
 COLLECTION_NAME = "gramvault_items"
 
+# R9: `chromadb.PersistentClient(...)` opens its own on-disk index/SQLite
+# state, so constructing a fresh one on every call (as this used to do) is
+# real per-request overhead, not just an allocation. One client is safe to
+# reuse for the life of the process per `chroma_dir` — a `reset_collection()`
+# (e.g. before a re-embed) still operates on the same cached client, so it
+# sees the drop-and-recreate immediately.
+_clients: dict[str, chromadb.ClientAPI] = {}
+
 
 @dataclass
 class QueryResult:
@@ -44,11 +52,16 @@ class QueryResult:
 
 
 def _client(config: Config) -> chromadb.ClientAPI:
-    config.resolved_chroma_dir.mkdir(parents=True, exist_ok=True)
-    return chromadb.PersistentClient(
-        path=str(config.resolved_chroma_dir),
-        settings=chromadb.Settings(anonymized_telemetry=False),
-    )
+    path = str(config.resolved_chroma_dir)
+    client = _clients.get(path)
+    if client is None:
+        config.resolved_chroma_dir.mkdir(parents=True, exist_ok=True)
+        client = chromadb.PersistentClient(
+            path=path,
+            settings=chromadb.Settings(anonymized_telemetry=False),
+        )
+        _clients[path] = client
+    return client
 
 
 def get_collection(config: Config | None = None):
@@ -99,9 +112,10 @@ def query(embedding: list[float], top_k: int = 10, config: Config | None = None)
     `score` as a similarity in roughly [0, 1] (1 - normalized distance;
     clamped, since Chroma's raw distance metric can exceed 1)."""
     collection = get_collection(config)
-    if collection.count() == 0:
+    count = collection.count()
+    if count == 0:
         return []
-    n_results = min(top_k, collection.count())
+    n_results = min(top_k, count)
     raw = collection.query(query_embeddings=[embedding], n_results=n_results)
 
     results: list[QueryResult] = []
