@@ -1,13 +1,9 @@
 """ChromaDB wrapper for item/media-file embeddings.
 
-SCAFFOLD NOTICE (from Agent A4, chat/search):
-    This file did not exist yet when A4 started building `gramvault.chat.*`
-    (retrieval needs `query()`, and A3's enrichment pipeline is expected to
-    call `upsert_item()` when it chunks+embeds captions/transcripts). A3:
-    please review and adapt to whatever chunking/collection layout you
-    actually want — just keep `upsert_item()` / `query()` signatures (or
-    coordinate changes with A4) since `gramvault.chat.retrieval` calls
-    `query()` directly.
+`upsert_item()` is called by the enrichment pipeline when it chunks and
+embeds captions/transcripts; `query()` is called directly by
+`gramvault.chat.retrieval`. Keep both signatures stable, or update those
+call sites alongside any change.
 
 Design:
     - A single persistent Chroma collection ("gramvault_items") at

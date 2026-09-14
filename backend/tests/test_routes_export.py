@@ -1,4 +1,4 @@
-"""Tests for the /api/export/* HTTP surface (Agent A6).
+"""Tests for the /api/export/* HTTP surface.
 
 Uses its own `export_client` fixture (rather than conftest's `client`)
 because these tests need `paths.obsidian_vault_dir` actually configured

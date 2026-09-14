@@ -1,13 +1,11 @@
 """Read-only loading of `Item` (+ nested Author/MediaFile/Tag) rows out of
 the shared SQLite DB, for the exporter.
 
-Agent A6 does not own the items/media_files/tags tables (A2/A3 do) but
-needs a fully-populated `Item` graph to render notes, and
-`routes_library.py` (A2/A5's query surface) is still a stub — so this
+The exporter needs a fully-populated `Item` graph to render notes, so this
 module talks to the DB directly via plain SQL, read-only, matching the
-shape defined in `models/schemas.py` and `db/schema.sql`. If A2 later
-lands real query helpers in routes_library.py, this can be swapped for
-those without changing `exporter.py`'s call site.
+shape defined in `models/schemas.py` and `db/schema.sql` — independent of
+`routes_library.py`'s query surface, which is shaped around the gallery
+API's pagination/filtering needs rather than a full graph load.
 """
 
 from __future__ import annotations

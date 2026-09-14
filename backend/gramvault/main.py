@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from gramvault import __version__
 from gramvault.api import (
     auth,
     jobs,
@@ -55,7 +56,8 @@ _DEV_FRONTEND_ORIGINS = [
 ]
 
 # Where `gramvault.cli`'s frontend build step is expected to output static
-# assets. TODO(A5): confirm this matches your Vite `build.outDir`.
+# assets — matches Vite's default `build.outDir` of `dist/` (see
+# frontend/vite.config.ts).
 _FRONTEND_DIST_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
@@ -103,7 +105,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app = FastAPI(
         title="GramVault Atlas",
         description="Private, local-first pipeline for saved Instagram content.",
-        version="0.2.0",
+        version=__version__,
         lifespan=lifespan,
         # Swagger UI / ReDoc / the raw schema are pointless in prod and
         # unauthenticated (they live outside /api/*) — dev-only (S11).

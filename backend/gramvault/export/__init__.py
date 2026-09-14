@@ -1,4 +1,4 @@
-"""Obsidian export package (Agent A6).
+"""Obsidian export package.
 
 Turns library `Item`/`MediaFile` rows into a folder of Markdown notes
 plus a Dataview-friendly index, inside a user-configured Obsidian vault.

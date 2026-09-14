@@ -1,16 +1,8 @@
 """Thin async HTTP wrapper around a local Ollama server.
 
-SCAFFOLD NOTICE (from Agent A4, chat/search):
-    This file did not exist yet when A4 started building `gramvault.chat.*`
-    (which needs `embed()` for retrieval and a text chat-completion function
-    for the RAG response). Per the multi-agent task split, A3 (AI pipeline)
-    owns this file for real — the functions below are a minimal, working
-    implementation so A4 wasn't blocked. A3: please review, replace/extend
-    `generate_caption()` (vision captioning — not used by A4) with the real
-    faster-whisper/llava-aware implementation, and treat `embed()`,
-    `chat_completion()`, `stream_chat()`, and the exception classes as the
-    stable contract other agents (A4) depend on — coordinate before
-    changing their signatures.
+`embed()`, `chat_completion()`, and `stream_chat()` are the stable contract
+`gramvault.chat.*` depends on for retrieval and RAG responses; changing
+their signatures means updating those call sites too.
 
 Everything here talks to `config.ollama.host` (default
 http://localhost:11434) using Ollama's native HTTP API:
@@ -92,8 +84,8 @@ async def ensure_running(config: Config | None = None) -> None:
 async def is_model_pulled(model: str, config: Config | None = None) -> bool:
     """Check whether `model` is present in the local Ollama model list.
 
-    Note (Agent A3): wraps connection failures into `OllamaNotRunningError`
-    (matching `ensure_running()`) rather than letting a raw `httpx.ConnectError`
+    Wraps connection failures into `OllamaNotRunningError` (matching
+    `ensure_running()`) rather than letting a raw `httpx.ConnectError`
     escape — otherwise callers that call `ensure_model_pulled()` without an
     `ensure_running()` first would get an unfriendly stack trace instead of
     the intended friendly exception.
@@ -193,8 +185,7 @@ async def generate_caption(
     config: Config | None = None,
 ) -> str:
     """Generate a text (optionally vision-grounded) caption via
-    `/api/generate`. Owned by Agent A3 in practice (llava captioning) —
-    this is a minimal passthrough so the interface exists."""
+    `/api/generate` — used for llava captioning."""
     config = config or get_config()
     model = model or config.models.vision_model
     payload: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False}
@@ -214,13 +205,13 @@ async def generate_caption(
     return data.get("response", "")
 
 
-# --- Added by Agent A3 (AI pipeline): image captioning ----------------------
+# --- Image captioning --------------------------------------------------
 #
-# `generate_caption()` above is a generic passthrough to `/api/generate`
-# (A4 added it as a minimal scaffold). `caption_image()` is the real
-# vision-captioning entry point used by `gramvault.ai.pipeline` — it owns
-# reading + base64-encoding the image file and supplying a sensible default
-# prompt, so callers just pass a path.
+# `generate_caption()` above is a generic passthrough to `/api/generate`.
+# `caption_image()` is the real vision-captioning entry point used by
+# `gramvault.ai.pipeline` — it owns reading + base64-encoding the image
+# file and supplying a sensible default prompt, so callers just pass a
+# path.
 
 DEFAULT_CAPTION_PROMPT = (
     "Describe this image in 2-3 concise, factual sentences. Focus on the "
@@ -243,12 +234,11 @@ async def caption_image(
     return await generate_caption(prompt, image_b64=image_b64, model=model, config=config)
 
 
-# --- Added by Agent A4 (chat/search): text chat completion -----------------
+# --- Text chat completion -----------------------------------------------
 #
 # `gramvault.chat.service` needs a non-streaming and a streaming chat
 # completion function against `/api/chat` (distinct from the
-# embedding/vision helpers above, which are A3's). Added additively —
-# nothing above this section was modified.
+# embedding/vision helpers above).
 
 
 async def chat_completion(

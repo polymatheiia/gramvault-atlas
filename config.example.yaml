@@ -20,7 +20,7 @@ paths:
   # ChromaDB persistent vector store directory.
   chroma_dir: "./data/chroma"
   # Obsidian vault to export Markdown notes into. Null until the user
-  # configures one; Agent A6 (Obsidian exporter) should refuse to run if unset.
+  # configures one; the Obsidian exporter refuses to run if unset.
   obsidian_vault_dir: null
 
 models:

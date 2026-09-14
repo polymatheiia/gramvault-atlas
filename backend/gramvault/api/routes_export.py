@@ -1,15 +1,15 @@
-"""Obsidian export API (Agent A6).
+"""Obsidian export API.
 
 Owns: rendering library items (captions, transcripts, vision captions,
 tags, media links) as Markdown notes into the user's configured Obsidian
 vault (`config.paths.obsidian_vault_dir`).
 
 Job tracking: a dedicated `export_jobs` table (see `db/schema.sql`) rather
-than reusing `import_jobs` -- kept as its own table so we don't touch a
-table Agent A2 is concurrently relying on.
+than reusing `import_jobs` -- kept as its own table since import and
+export are independent, unrelated job lifecycles.
 
-Export itself runs via FastAPI `BackgroundTasks` (no separate job queue
-exists in this scaffold): `POST /obsidian` creates a `pending` row and
+Export itself runs via FastAPI `BackgroundTasks` (no separate job queue):
+`POST /obsidian` creates a `pending` row and
 returns immediately (202), the background task flips it to `running` then
 `done`/`failed` and fills in the counts, and `GET /jobs/{id}` polls it.
 Under `TestClient`, background tasks run synchronously before the request

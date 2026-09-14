@@ -1,4 +1,4 @@
-"""Enrichment API (Agent A3).
+"""Enrichment API.
 
 Owns: triggering the AI enrichment pipeline (keyframe extraction + vision
 captions for photos/videos, on-screen-text OCR for silent reels,

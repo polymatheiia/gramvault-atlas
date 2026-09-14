@@ -1,4 +1,4 @@
-"""Ingestion package (Agent A2): parses Instagram "Download Your Information"
+"""Ingestion package: parses Instagram "Download Your Information"
 export ZIPs, organizes any embedded media files by content hash, and writes
 authors/items/media_files rows tracked by an import_jobs row.
 

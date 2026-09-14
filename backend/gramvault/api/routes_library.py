@@ -1,4 +1,4 @@
-"""Library/gallery API (Agent A2, consumed by Agent A5's frontend).
+"""Library/gallery API.
 
 Owns: the browsable gallery grid, filtering by author/media type/tag/
 category/date/free-text, single-item detail, manual tag editing, manual

@@ -1,4 +1,4 @@
-"""RAG chat + semantic search package (Agent A4).
+"""RAG chat + semantic search package.
 
 Modules:
     retrieval.py  — hybrid (vector + keyword) retrieval over the library.

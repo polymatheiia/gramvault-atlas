@@ -1,8 +1,8 @@
-"""Chat (RAG) + semantic search API — implemented by Agent A4.
+"""Chat (RAG) + semantic search API.
 
 Owns: chat sessions/messages backed by SQLite, streaming assistant
 responses over Server-Sent Events, and a semantic search endpoint over
-the ChromaDB embeddings that Agent A3's enrichment pipeline writes.
+the ChromaDB embeddings that the enrichment pipeline writes.
 
 RAG orchestration (retrieval, prompt construction, streaming completion,
 citation persistence) lives in `gramvault.chat.service` — this module is

@@ -134,9 +134,8 @@ class PullConfig(BaseModel):
 
 
 class ExportConfig(BaseModel):
-    """Obsidian export behavior (Agent A6). Additive section — safe
-    defaults so existing config.yaml files without an `export:` block
-    keep working unchanged."""
+    """Obsidian export behavior. Safe defaults so existing config.yaml
+    files without an `export:` block keep working unchanged."""
 
     # Subfolder created inside `paths.obsidian_vault_dir` when a request
     # doesn't specify one explicitly.

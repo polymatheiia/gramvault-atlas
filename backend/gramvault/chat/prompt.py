@@ -1,8 +1,8 @@
 """Builds the RAG prompt fed to the chat model: a system instruction plus a
 numbered, citable block of retrieved item summaries.
 
-CITATION MARKER FORMAT (stable contract — Agent A5 the frontend parses
-this, Agent A7's README should document it too):
+CITATION MARKER FORMAT (stable contract — the frontend parses this;
+document it in the README if it changes):
 
     `[[item:<item_id>]]`
 

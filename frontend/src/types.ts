@@ -73,9 +73,9 @@ export interface MediaFile {
   width: number | null
   height: number | null
   duration_seconds: number | null
-  /** Populated by faster-whisper for videos/reels (Agent A3). */
+  /** Populated by faster-whisper for videos/reels. */
   transcript: string | null
-  /** Populated by the llava vision model (Agent A3). */
+  /** Populated by the llava vision model. */
   vision_caption: string | null
   checksum: string | null
 }

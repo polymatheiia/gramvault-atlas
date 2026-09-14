@@ -1,4 +1,4 @@
-"""Import/ingestion API (Agent A2).
+"""Import/ingestion API.
 
 Owns: uploading an Instagram data export ZIP, unpacking it, creating
 authors/items/media_files rows, and tracking progress via `import_jobs`

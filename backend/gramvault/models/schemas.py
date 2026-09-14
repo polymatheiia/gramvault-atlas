@@ -1,17 +1,20 @@
 """Shared Pydantic models for GramVault.
 
-This is the contract other agents build on top of:
-  - Agent A2 (ingestion) produces Author / Item / MediaFile / ImportJob rows.
-  - Agent A3 (AI pipeline) fills in MediaFile.transcript / vision_caption and
-    flips Item.enrichment_status, and writes embeddings to ChromaDB keyed by
-    item/media_file id (collection layout is A3's call).
-  - Agent A4 (chat/search) produces ChatSession / ChatMessage / ChatCitation.
-  - Agent A5 (frontend) consumes all of these as JSON over the API in
+This is the contract the rest of the codebase builds on top of:
+  - Ingestion (`gramvault.ingestion`) produces Author / Item / MediaFile /
+    ImportJob rows.
+  - The AI pipeline (`gramvault.ai`) fills in MediaFile.transcript /
+    vision_caption and flips Item.enrichment_status, and writes embeddings
+    to ChromaDB keyed by item/media_file id.
+  - Chat/search (`gramvault.chat`) produces ChatSession / ChatMessage /
+    ChatCitation.
+  - The frontend consumes all of these as JSON over the API in
     backend/gramvault/api/.
-  - Agent A6 (Obsidian exporter) reads Item/MediaFile/Tag to render notes.
+  - The Obsidian exporter (`gramvault.export`) reads Item/MediaFile/Tag to
+    render notes.
 
 Keep field additions backwards compatible (add optional fields with
-defaults) so agents working in parallel don't break each other.
+defaults) — these models cross the API boundary the frontend depends on.
 """
 
 from __future__ import annotations
@@ -130,9 +133,9 @@ class MediaFile(ORMBase):
     width: int | None = None
     height: int | None = None
     duration_seconds: float | None = None
-    # TODO(A3): populated by faster-whisper for videos/reels.
+    # Populated by faster-whisper for videos/reels (gramvault.ai.transcription).
     transcript: str | None = None
-    # TODO(A3): populated by the llava vision model.
+    # Populated by the llava vision model (gramvault.ai.pipeline).
     vision_caption: str | None = None
     checksum: str | None = None
     # On-screen text read by `gramvault.ai.ocr` (migration 003). `ocr_text`
