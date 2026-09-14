@@ -293,6 +293,20 @@ export interface ItemCategoryUpdateRequest {
   category_id: number | null
 }
 
+export interface CategoryCreateRequest {
+  name: string
+  description?: string | null
+  color?: string | null
+  sort_order?: number | null
+}
+
+export interface CategoryUpdateRequest {
+  name?: string | null
+  description?: string | null
+  color?: string | null
+  sort_order?: number | null
+}
+
 export interface StepProgress {
   done: number
   pending: number

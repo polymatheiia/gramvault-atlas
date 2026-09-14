@@ -38,7 +38,7 @@ const SCOPES: { value: CategorizeScopeName; label: string }[] = [
   { value: 'all', label: 'Every item (skips anything set by hand)' },
 ]
 
-const REVIEW_PAGE_SIZE = 60
+const REVIEW_PAGE_SIZE = 24
 
 function Bar({ done, total }: { done: number; total: number }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
@@ -60,29 +60,47 @@ function Bar({ done, total }: { done: number; total: number }) {
 function ReviewCard({
   item,
   categories,
+  focused,
+  keyHint,
+  onFocusCard,
   onReassign,
+  onConfirm,
 }: {
   item: Item
   categories: CategoryListResponse['categories']
-  onReassign: (item: Item, categoryId: number) => void
+  focused: boolean
+  keyHint: number | null
+  onFocusCard: () => void
+  onReassign: (item: Item, categoryId: number) => Promise<void>
+  onConfirm: (item: Item) => Promise<void>
 }) {
   const [saving, setSaving] = useState(false)
   const first = item.media_files[0]
   const confidence = item.category_confidence != null ? `${Math.round(item.category_confidence * 100)}%` : '—'
 
   return (
-    <div className="card flex flex-col overflow-hidden">
-      <Link to={`/items/${item.id}`} className="aspect-square w-full overflow-hidden bg-surface-overlay">
-        {first ? (
-          first.media_type === 'video' ? (
-            <video src={mediaUrl(first.file_path)} className="h-full w-full object-cover" muted preload="metadata" />
-          ) : (
-            <img src={mediaUrl(first.file_path)} alt="" className="h-full w-full object-cover" loading="lazy" />
-          )
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-slate-600">No media</div>
+    <div
+      className={`card flex flex-col overflow-hidden ${focused ? 'ring-2 ring-accent' : ''}`}
+      onClick={onFocusCard}
+      onFocus={onFocusCard}
+      tabIndex={0}
+    >
+      <div className="relative aspect-square w-full overflow-hidden bg-surface-overlay">
+        {keyHint != null && (
+          <span className="absolute left-1.5 top-1.5 z-10 badge bg-black/60 text-slate-200">{keyHint}</span>
         )}
-      </Link>
+        <Link to={`/items/${item.id}`} className="block h-full w-full">
+          {first ? (
+            first.media_type === 'video' ? (
+              <video src={mediaUrl(first.file_path)} className="h-full w-full object-cover" muted preload="metadata" />
+            ) : (
+              <img src={mediaUrl(first.file_path)} alt="" className="h-full w-full object-cover" loading="lazy" />
+            )
+          ) : (
+            <div className="flex h-full w-full items-center justify-center text-xs text-slate-600">No media</div>
+          )}
+        </Link>
+      </div>
       <div className="flex flex-1 flex-col gap-2 p-3">
         <p className="line-clamp-2 text-xs text-slate-300">
           {item.caption || <span className="text-slate-500">No caption</span>}
@@ -95,26 +113,40 @@ function ReviewCard({
         {item.category_reason && (
           <p className="line-clamp-2 text-xs italic text-slate-500">{item.category_reason}</p>
         )}
-        <select
-          className="input mt-auto text-xs"
-          defaultValue=""
-          disabled={saving}
-          onChange={(e) => {
-            const id = Number(e.target.value)
-            if (!id) return
-            setSaving(true)
-            onReassign(item, id)
-          }}
-        >
-          <option value="" disabled>
-            Set category…
-          </option>
-          {categories.map((c) => (
-            <option key={c.id ?? c.name} value={c.id ?? ''}>
-              {c.name}
-            </option>
-          ))}
-        </select>
+        <div className="mt-auto flex gap-1.5">
+          <select
+            className="input flex-1 text-xs"
+            value={item.category_id ?? ''}
+            disabled={saving}
+            onChange={(e) => {
+              const id = Number(e.target.value)
+              if (!id || id === item.category_id) return
+              setSaving(true)
+              onReassign(item, id).catch(() => setSaving(false))
+            }}
+          >
+            <option value="">— uncategorized —</option>
+            {categories.map((c) => (
+              <option key={c.id ?? c.name} value={c.id ?? ''}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          {item.category_id != null && (
+            <button
+              type="button"
+              className="btn-secondary shrink-0 text-xs"
+              disabled={saving}
+              title="Accept the suggestion (Enter)"
+              onClick={() => {
+                setSaving(true)
+                onConfirm(item).catch(() => setSaving(false))
+              }}
+            >
+              ✓
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )
@@ -134,6 +166,10 @@ export function Categorize() {
 
   const [review, setReview] = useState<Item[]>([])
   const [reviewTotal, setReviewTotal] = useState(0)
+  const [reviewPage, setReviewPage] = useState(1)
+  const [focusedIndex, setFocusedIndex] = useState(0)
+  const [acceptThreshold, setAcceptThreshold] = useState(0.5)
+  const [bulkAccepting, setBulkAccepting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const refreshProgress = useCallback(async () => {
@@ -147,15 +183,21 @@ export function Categorize() {
     }
   }, [])
 
-  const refreshReview = useCallback(() => {
+  const refreshReview = useCallback((page = reviewPage) => {
     api
-      .get<ItemListResponse>('/api/library/items', { needs_review: 1, page_size: REVIEW_PAGE_SIZE })
+      .get<ItemListResponse>('/api/library/items', { needs_review: 1, page, page_size: REVIEW_PAGE_SIZE })
       .then((res) => {
         setReview(res.items)
         setReviewTotal(res.total)
+        setFocusedIndex(0)
       })
       .catch(() => undefined)
-  }, [])
+  }, [reviewPage])
+
+  function goToReviewPage(page: number) {
+    setReviewPage(page)
+    refreshReview(page)
+  }
 
   useEffect(() => {
     void refreshProgress()
@@ -242,28 +284,99 @@ export function Categorize() {
     }
   }
 
-  async function reassign(item: Item, categoryId: number) {
+  const reassign = useCallback(
+    async (item: Item, categoryId: number) => {
+      try {
+        await api.patch<Item>(`/api/library/items/${item.id}`, { category_id: categoryId })
+        setReview((list) => list.filter((i) => i.id !== item.id))
+        setReviewTotal((n) => Math.max(0, n - 1))
+        void refreshProgress()
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to reassign')
+        throw err
+      }
+    },
+    [refreshProgress],
+  )
+
+  /** "Accept the suggestion" — PATCH with the item's own current
+   * category_id, which the backend always marks `source: 'manual'` (same
+   * pattern as ItemDetail's Confirm button). */
+  const confirmSuggestion = useCallback(
+    async (item: Item) => {
+      if (item.category_id != null) await reassign(item, item.category_id)
+    },
+    [reassign],
+  )
+
+  async function acceptAllAboveThreshold() {
+    const targets = review.filter(
+      (i) => i.category_id != null && (i.category_confidence ?? 0) >= acceptThreshold,
+    )
+    if (targets.length === 0) return
+    setBulkAccepting(true)
+    setError(null)
     try {
-      await api.patch<Item>(`/api/library/items/${item.id}`, { category_id: categoryId })
-      setReview((list) => list.filter((i) => i.id !== item.id))
-      setReviewTotal((n) => Math.max(0, n - 1))
+      await Promise.all(targets.map((i) => api.patch(`/api/library/items/${i.id}`, { category_id: i.category_id })))
+      const targetIds = new Set(targets.map((i) => i.id))
+      setReview((list) => list.filter((i) => !targetIds.has(i.id)))
+      setReviewTotal((n) => Math.max(0, n - targets.length))
       void refreshProgress()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to reassign')
+      setError(err instanceof Error ? err.message : 'Bulk accept failed')
+    } finally {
+      setBulkAccepting(false)
     }
   }
+
+  const skipFocused = useCallback(() => {
+    setFocusedIndex((i) => Math.min(i + 1, Math.max(0, review.length - 1)))
+  }, [review.length])
+
+  // Clamp focus back into range after items leave the current page
+  // (reassigned, confirmed, or bulk-accepted).
+  useEffect(() => {
+    setFocusedIndex((i) => Math.min(i, Math.max(0, review.length - 1)))
+  }, [review.length])
+
+  // Keyboard triage: 1-9 assigns the nth category, Enter accepts the
+  // focused card's suggestion, S skips to the next one without changing
+  // anything.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
+      const item = review[focusedIndex]
+      if (!item) return
+      if (e.key >= '1' && e.key <= '9') {
+        const cat = (categories?.categories ?? [])[Number(e.key) - 1]
+        if (cat?.id != null) void reassign(item, cat.id).catch(() => undefined)
+      } else if (e.key === 'Enter') {
+        void confirmSuggestion(item).catch(() => undefined)
+      } else if (e.key.toLowerCase() === 's') {
+        skipFocused()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [review, focusedIndex, categories, reassign, confirmSuggestion, skipFocused])
 
   const usesLlm = method !== 'keyword'
   const categorize = models?.tasks.categorize
   const jobActive = busy || progress?.job_id != null
+  const reviewPageCount = Math.max(1, Math.ceil(reviewTotal / REVIEW_PAGE_SIZE))
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-6">
       <section className="flex flex-col gap-1">
-        <h1 className="text-lg font-semibold text-slate-100">Categorize</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-lg font-semibold text-slate-100">Categorize</h1>
+          <Link to="/categories" className="text-sm text-accent no-underline hover:underline">
+            Manage categories →
+          </Link>
+        </div>
         <p className="text-sm text-slate-400">
-          Sort items into the 14 categories. The keyword vote is the free floor; the LLM pass is where
-          the accuracy comes from. Anything you set by hand is never overwritten.
+          Sort items into {categories?.categories.length ?? 'the'} categories. The keyword vote is the free
+          floor; the LLM pass is where the accuracy comes from. Anything you set by hand is never overwritten.
         </p>
       </section>
 
@@ -359,24 +472,77 @@ export function Categorize() {
           Automatic guesses the classifier isn&apos;t confident about. Pick the right category and it&apos;s
           locked in as a manual label.
         </p>
+        <p className="text-xs text-slate-500">
+          Keyboard: <kbd className="badge bg-surface-overlay">1</kbd>–<kbd className="badge bg-surface-overlay">9</kbd>{' '}
+          assign the nth category to the focused card, <kbd className="badge bg-surface-overlay">Enter</kbd> accepts
+          its suggestion, <kbd className="badge bg-surface-overlay">S</kbd> skips it. Click a card to focus it.
+        </p>
+
+        {review.length > 0 && (
+          <div className="card flex flex-wrap items-center gap-3 px-4 py-3">
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              Accept all suggestions ≥
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.05}
+                value={acceptThreshold}
+                onChange={(e) => setAcceptThreshold(Number(e.target.value))}
+              />
+              {Math.round(acceptThreshold * 100)}%
+            </label>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              disabled={bulkAccepting}
+              onClick={() => void acceptAllAboveThreshold()}
+            >
+              {bulkAccepting ? 'Accepting…' : 'Accept matching (this page)'}
+            </button>
+          </div>
+        )}
+
         {review.length === 0 ? (
           <p className="text-sm text-slate-500">Nothing waiting for review.</p>
         ) : (
           <>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {review.map((item) => (
+              {review.map((item, idx) => (
                 <ReviewCard
                   key={item.id}
                   item={item}
                   categories={categories?.categories ?? []}
+                  focused={idx === focusedIndex}
+                  keyHint={idx < 9 ? idx + 1 : null}
+                  onFocusCard={() => setFocusedIndex(idx)}
                   onReassign={reassign}
+                  onConfirm={confirmSuggestion}
                 />
               ))}
             </div>
-            {reviewTotal > review.length && (
-              <p className="text-xs text-slate-500">
-                Showing {review.length} of {reviewTotal} — clear some, then reload for the rest.
-              </p>
+            {reviewPageCount > 1 && (
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <button
+                  type="button"
+                  className="btn-secondary text-xs disabled:opacity-40"
+                  disabled={reviewPage <= 1}
+                  onClick={() => goToReviewPage(reviewPage - 1)}
+                >
+                  ← Prev
+                </button>
+                <span>
+                  Page {reviewPage} of {reviewPageCount} — {reviewTotal} total
+                </span>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs disabled:opacity-40"
+                  disabled={reviewPage >= reviewPageCount}
+                  onClick={() => goToReviewPage(reviewPage + 1)}
+                >
+                  Next →
+                </button>
+              </div>
             )}
           </>
         )}

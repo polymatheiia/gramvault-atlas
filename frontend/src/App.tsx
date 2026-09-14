@@ -4,6 +4,7 @@ import { JobStrip } from './components/JobStrip'
 import { NavBar } from './components/NavBar'
 import { ToastProvider } from './lib/toast'
 import { JobsProvider } from './lib/useJobs'
+import { Categories } from './pages/Categories'
 import { Categorize } from './pages/Categorize'
 import { Chat } from './pages/Chat'
 import { Digest } from './pages/Digest'
@@ -38,6 +39,7 @@ function App() {
                   <Route path="/pull" element={<Pull />} />
                   <Route path="/enrich" element={<Enrich />} />
                   <Route path="/categorize" element={<Categorize />} />
+                  <Route path="/categories" element={<Categories />} />
                   <Route path="/digest" element={<Digest />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="*" element={<NotFound />} />
