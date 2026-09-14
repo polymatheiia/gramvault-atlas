@@ -11,16 +11,19 @@ just the HTTP surface + friendly error translation.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from gramvault.ai.errors import ProviderNotReadyError
 from gramvault.api.deps import get_config_dependency
 from gramvault.chat import service
+from gramvault.chat.retrieval import SearchFilters
 from gramvault.config import Config
 from gramvault.db.session import session_scope
-from gramvault.models.schemas import ChatMessage, ChatSession, Item
+from gramvault.models.schemas import ChatMessage, ChatSession, Item, MediaType
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -42,6 +45,13 @@ class SemanticSearchResult(BaseModel):
 class SemanticSearchResponse(BaseModel):
     query: str
     results: list[SemanticSearchResult]
+    total: int = Field(
+        description="Matching candidates found within the search window "
+        "(top_k*3 with facets active, top_k*2 without) before the final "
+        "top_k truncation — NOT a full-library count the way the gallery "
+        "listing's `total` is. Can exceed `len(results)` even with no "
+        "facets applied."
+    )
 
 
 def _as_http_error(exc: ProviderNotReadyError) -> HTTPException:
@@ -124,6 +134,11 @@ async def send_chat_message(
 async def semantic_search(
     q: str = Query(..., description="Free-text query to search over the library semantically"),
     top_k: int = Query(default=10, ge=1, le=100),
+    category: str | None = Query(default=None, description="Filter by category name"),
+    author: str | None = Query(default=None, description="Filter by author username"),
+    media_type: MediaType | None = Query(default=None, description="Filter by media type"),
+    date_from: datetime | None = Query(default=None),
+    date_to: datetime | None = Query(default=None),
     config: Config = Depends(get_config_dependency),
 ) -> SemanticSearchResponse:
     """Semantic search over the library (captions/transcripts/vision
@@ -131,13 +146,28 @@ async def semantic_search(
     style experience in the frontend. No LLM call — embedding + vector
     search (merged with a keyword pass), same as chat retrieval but
     without the chat completion step.
+
+    `category`/`author`/`media_type`/`date_from`/`date_to` narrow the
+    candidates to the same facets the gallery filters on (R13 — this used
+    to ignore every gallery filter, leaving only a client-side category
+    filter applied after the fact over whatever the top-k happened to be).
     """
+    filters = SearchFilters(
+        category=category,
+        author=author,
+        media_type=media_type.value if media_type else None,
+        date_from=date_from.isoformat() if date_from else None,
+        date_to=date_to.isoformat() if date_to else None,
+    )
     try:
-        raw_results = await service.semantic_search(q, top_k=top_k, config=config)
+        raw_results, total = await service.semantic_search(
+            q, top_k=top_k, config=config, filters=filters
+        )
     except ProviderNotReadyError as exc:
         raise _as_http_error(exc) from exc
 
     return SemanticSearchResponse(
         query=q,
         results=[SemanticSearchResult(**r) for r in raw_results],
+        total=total,
     )

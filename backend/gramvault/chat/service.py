@@ -251,24 +251,35 @@ async def stream_message(
 
 
 async def semantic_search(
-    query: str, top_k: int = 10, config: Config | None = None
-) -> list[dict[str, Any]]:
+    query: str,
+    top_k: int = 10,
+    config: Config | None = None,
+    *,
+    filters: retrieval.SearchFilters | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     """Plain (non-chat) semantic search for the gallery search box: embed +
     vector search, boosted/merged with a keyword pass, no LLM call.
+    `filters` narrows to the gallery's own facets (R13 — this used to
+    ignore every gallery filter).
 
-    Returns a list of `{"item": Item, "score": float, "snippet": str | None}`
-    dicts (the route wraps these into `SemanticSearchResult`).
+    Returns `(results, total)`: `results` is a list of
+    `{"item": Item, "score": float, "snippet": str | None}` dicts (the
+    route wraps these into `SemanticSearchResult`); `total` is
+    `hybrid_search_faceted`'s pre-truncation filtered-candidate count.
     """
     config = config or get_config()
     conn = get_connection(config)
     init_db(conn)
     try:
-        results = await retrieval.hybrid_search(conn, query, top_k=top_k, config=config)
+        results, total = await retrieval.hybrid_search_faceted(
+            conn, query, top_k=top_k, config=config, filters=filters
+        )
         items = retrieval.fetch_items(conn, [r.item_id for r in results])
-        return [
+        payload = [
             {"item": items[r.item_id], "score": r.score, "snippet": r.snippet}
             for r in results
             if r.item_id in items
         ]
+        return payload, total
     finally:
         conn.close()

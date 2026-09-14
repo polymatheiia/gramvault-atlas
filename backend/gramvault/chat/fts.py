@@ -9,7 +9,14 @@ does a full rebuild if it finds the index empty.
 
 from __future__ import annotations
 
+import re
 import sqlite3
+
+# Split a free-text query into tokens for an FTS5 MATCH expression. `\w`
+# under Python 3's default `re.UNICODE` keeps letters/digits of any script
+# (the corpus is multilingual), so operators/punctuation that would
+# otherwise be interpreted by FTS5 are dropped.
+_TOKEN_SPLIT = re.compile(r"\W+", re.UNICODE)
 
 # Keep in sync with `db/migrations/006_items_fts.py::_POPULATE`.
 _ROW_SELECT = """
@@ -31,6 +38,15 @@ LEFT JOIN authors a ON a.id = i.author_id
 """
 
 _INSERT = "INSERT INTO items_fts(rowid, caption, author, tags, transcript, vision, ocr) "
+
+
+def match_expr(query: str) -> str:
+    """Turn a free-text query into an FTS5 MATCH string: each token
+    prefix-matched (`term*`) and AND-ed. Empty if the query has no word
+    characters. Shared by `chat.retrieval.keyword_search` and the gallery's
+    `q` filter (`api/routes_library.py`, R12) so both search the same way."""
+    tokens = [t for t in _TOKEN_SPLIT.split(query) if t]
+    return " ".join(f"{t}*" for t in tokens)
 
 
 def fts_available(conn: sqlite3.Connection) -> bool:
@@ -70,4 +86,4 @@ def ensure_populated(conn: sqlite3.Connection) -> bool:
     return True
 
 
-__all__ = ["ensure_populated", "fts_available", "reindex"]
+__all__ = ["ensure_populated", "fts_available", "match_expr", "reindex"]

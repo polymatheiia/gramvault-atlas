@@ -147,6 +147,51 @@ def test_list_items_free_text_search(client: TestClient, tmp_config: Config) -> 
     assert body["items"][0]["external_id"] == "item-2"
 
 
+def test_list_items_free_text_search_matches_transcript(
+    client: TestClient, tmp_config: Config
+) -> None:
+    """R12: `q` used to be `caption LIKE` only, even though the FTS5 index
+    already covers transcript/vision/OCR text — that broader search was
+    only reachable through the semantic chat endpoint. A word that
+    appears in a media file's transcript, and nowhere in either item's
+    caption, should now still find the item."""
+    ids = _seed_library(tmp_config)
+    with session_scope(tmp_config) as conn:
+        conn.execute(
+            "INSERT INTO media_files (item_id, file_path, media_type, sequence_index, transcript) "
+            "VALUES (?, 'media/bb/bbbb.mp4', 'video', 0, 'a story about kayaking upriver')",
+            (ids["item2_id"],),
+        )
+
+    response = client.get("/api/library/items", params={"q": "kayaking"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["external_id"] == "item-2"
+
+
+def test_list_items_free_text_search_with_fts_operator_words_falls_back_to_like(
+    client: TestClient, tmp_config: Config
+) -> None:
+    """FTS5 treats a bare AND/OR/NOT/NEAR as a query operator, not a
+    search term — `q="cats and dogs"` tokenizes to `cats* AND* dogs*`,
+    which is a MATCH syntax error (the operator followed by a stray `*`).
+    Must fall back to the caption LIKE path instead of 500ing, the same
+    way chat.retrieval.keyword_search already does for the semantic
+    endpoint."""
+    with session_scope(tmp_config) as conn:
+        conn.execute(
+            "INSERT INTO items (external_id, media_type, caption) "
+            "VALUES ('item-cats', 'photo', 'cats and dogs playing')"
+        )
+
+    response = client.get("/api/library/items", params={"q": "cats and dogs"})
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+
+
 def test_list_items_date_range_filter(client: TestClient, tmp_config: Config) -> None:
     _seed_library(tmp_config)
 

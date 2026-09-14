@@ -278,23 +278,27 @@ class TestSemanticSearch:
 
         with (
             patch.object(
-                service.retrieval, "hybrid_search", new_callable=AsyncMock, return_value=[fake_result]
+                service.retrieval,
+                "hybrid_search_faceted",
+                new_callable=AsyncMock,
+                return_value=([fake_result], 1),
             ),
             patch.object(service.retrieval, "fetch_items", return_value={5: item}),
         ):
-            results = await service.semantic_search("beach", top_k=5, config=tmp_config)
+            results, total = await service.semantic_search("beach", top_k=5, config=tmp_config)
 
         assert len(results) == 1
         assert results[0]["item"].id == 5
         assert results[0]["score"] == 0.75
         assert results[0]["snippet"] == "beach sunset"
+        assert total == 1
 
     @pytest.mark.anyio
     async def test_propagates_ollama_errors_for_route_to_translate(self, tmp_config: Config) -> None:
         with (
             patch.object(
                 service.retrieval,
-                "hybrid_search",
+                "hybrid_search_faceted",
                 new_callable=AsyncMock,
                 side_effect=ModelNotPulledError("nomic-embed-text"),
             ),

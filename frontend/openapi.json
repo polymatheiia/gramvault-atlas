@@ -2525,11 +2525,17 @@
             },
             "title": "Results",
             "type": "array"
+          },
+          "total": {
+            "description": "Matching candidates found within the search window (top_k*3 with facets active, top_k*2 without) before the final top_k truncation \u2014 NOT a full-library count the way the gallery listing's `total` is. Can exceed `len(results)` even with no facets applied.",
+            "title": "Total",
+            "type": "integer"
           }
         },
         "required": [
           "query",
-          "results"
+          "results",
+          "total"
         ],
         "title": "SemanticSearchResponse",
         "type": "object"
@@ -3038,7 +3044,7 @@
     },
     "/api/chat/search": {
       "get": {
-        "description": "Semantic search over the library (captions/transcripts/vision\ncaptions), independent of the chat flow \u2014 used for a \"search bar\"\nstyle experience in the frontend. No LLM call \u2014 embedding + vector\nsearch (merged with a keyword pass), same as chat retrieval but\nwithout the chat completion step.",
+        "description": "Semantic search over the library (captions/transcripts/vision\ncaptions), independent of the chat flow \u2014 used for a \"search bar\"\nstyle experience in the frontend. No LLM call \u2014 embedding + vector\nsearch (merged with a keyword pass), same as chat retrieval but\nwithout the chat completion step.\n\n`category`/`author`/`media_type`/`date_from`/`date_to` narrow the\ncandidates to the same facets the gallery filters on (R13 \u2014 this used\nto ignore every gallery filter, leaving only a client-side category\nfilter applied after the fact over whatever the top-k happened to be).",
         "operationId": "semantic_search_api_chat_search_get",
         "parameters": [
           {
@@ -3062,6 +3068,94 @@
               "minimum": 1,
               "title": "Top K",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Filter by category name",
+            "in": "query",
+            "name": "category",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by category name",
+              "title": "Category"
+            }
+          },
+          {
+            "description": "Filter by author username",
+            "in": "query",
+            "name": "author",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by author username",
+              "title": "Author"
+            }
+          },
+          {
+            "description": "Filter by media type",
+            "in": "query",
+            "name": "media_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/MediaType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by media type",
+              "title": "Media Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
             }
           }
         ],
@@ -4081,7 +4175,7 @@
     },
     "/api/import/upload": {
       "post": {
-        "description": "Upload an Instagram export ZIP and run the import.\n\nThe upload is saved under `config.resolved_imports_dir` (never\ntrusting the client-supplied filename beyond its basename) \u2014 outside\n`library_dir`, since that's served at `/media` and a \"Download Your\nInformation\" export can contain far more than saved posts (audit\nfinding S8). Import runs synchronously for v1 \u2014 a saved-posts+media\nZIP processes fast enough that a background queue isn't worth the\nextra moving parts yet; A3 owns the (separately long-running)\nenrichment background queue.\n\nA ZIP that doesn't look like a real Instagram export doesn't raise an\nHTTP error here \u2014 it comes back as a normal `ImportJob` with\n`status=\"failed\"` and a friendly `error_message`, so the frontend can\nshow it inline rather than having to special-case a 4xx/5xx. The\nuploaded ZIP is deleted after a successful import; kept on failure so\nit can be inspected/retried.",
+        "description": "Upload an Instagram export ZIP and start the import in the background.\n\nThe upload is saved under `config.resolved_imports_dir` (never\ntrusting the client-supplied filename beyond its basename) \u2014 outside\n`library_dir`, since that's served at `/media` and a \"Download Your\nInformation\" export can contain far more than saved posts (audit\nfinding S8).\n\nReturns immediately with the job in `pending`/`running` state; the\nactual parse-and-write work runs in a background thread\n(`asyncio.to_thread`) so a large media-bearing export no longer\nblocks every other request \u2014 including `/api/health` and job\npolling \u2014 for its whole duration (audit finding R2). Poll\n`GET /api/import/jobs/{id}` for progress, or\n`POST /api/import/jobs/{id}/cancel` to stop it.\n\nA ZIP that doesn't look like a real Instagram export doesn't raise an\nHTTP error here \u2014 the job ends up `status=\"failed\"` with a friendly\n`error_message`, so the frontend can show it inline rather than\nhaving to special-case a 4xx/5xx. The uploaded ZIP is deleted after a\nsuccessful import; kept on failure so it can be inspected/retried.",
         "operationId": "upload_export_api_import_upload_post",
         "requestBody": {
           "content": {

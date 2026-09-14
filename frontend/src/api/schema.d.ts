@@ -57,6 +57,11 @@ export interface paths {
          *     style experience in the frontend. No LLM call — embedding + vector
          *     search (merged with a keyword pass), same as chat retrieval but
          *     without the chat completion step.
+         *
+         *     `category`/`author`/`media_type`/`date_from`/`date_to` narrow the
+         *     candidates to the same facets the gallery filters on (R13 — this used
+         *     to ignore every gallery filter, leaving only a client-side category
+         *     filter applied after the fact over whatever the top-k happened to be).
          */
         get: operations["semantic_search_api_chat_search_get"];
         put?: never;
@@ -562,23 +567,27 @@ export interface paths {
         put?: never;
         /**
          * Upload Export
-         * @description Upload an Instagram export ZIP and run the import.
+         * @description Upload an Instagram export ZIP and start the import in the background.
          *
          *     The upload is saved under `config.resolved_imports_dir` (never
          *     trusting the client-supplied filename beyond its basename) — outside
          *     `library_dir`, since that's served at `/media` and a "Download Your
          *     Information" export can contain far more than saved posts (audit
-         *     finding S8). Import runs synchronously for v1 — a saved-posts+media
-         *     ZIP processes fast enough that a background queue isn't worth the
-         *     extra moving parts yet; A3 owns the (separately long-running)
-         *     enrichment background queue.
+         *     finding S8).
+         *
+         *     Returns immediately with the job in `pending`/`running` state; the
+         *     actual parse-and-write work runs in a background thread
+         *     (`asyncio.to_thread`) so a large media-bearing export no longer
+         *     blocks every other request — including `/api/health` and job
+         *     polling — for its whole duration (audit finding R2). Poll
+         *     `GET /api/import/jobs/{id}` for progress, or
+         *     `POST /api/import/jobs/{id}/cancel` to stop it.
          *
          *     A ZIP that doesn't look like a real Instagram export doesn't raise an
-         *     HTTP error here — it comes back as a normal `ImportJob` with
-         *     `status="failed"` and a friendly `error_message`, so the frontend can
-         *     show it inline rather than having to special-case a 4xx/5xx. The
-         *     uploaded ZIP is deleted after a successful import; kept on failure so
-         *     it can be inspected/retried.
+         *     HTTP error here — the job ends up `status="failed"` with a friendly
+         *     `error_message`, so the frontend can show it inline rather than
+         *     having to special-case a 4xx/5xx. The uploaded ZIP is deleted after a
+         *     successful import; kept on failure so it can be inspected/retried.
          */
         post: operations["upload_export_api_import_upload_post"];
         delete?: never;
@@ -1910,6 +1919,11 @@ export interface components {
             query: string;
             /** Results */
             results: components["schemas"]["SemanticSearchResult"][];
+            /**
+             * Total
+             * @description Matching candidates found within the search window (top_k*3 with facets active, top_k*2 without) before the final top_k truncation — NOT a full-library count the way the gallery listing's `total` is. Can exceed `len(results)` even with no facets applied.
+             */
+            total: number;
         };
         /** SemanticSearchResult */
         SemanticSearchResult: {
@@ -2130,6 +2144,14 @@ export interface operations {
                 /** @description Free-text query to search over the library semantically */
                 q: string;
                 top_k?: number;
+                /** @description Filter by category name */
+                category?: string | null;
+                /** @description Filter by author username */
+                author?: string | null;
+                /** @description Filter by media type */
+                media_type?: components["schemas"]["MediaType"] | null;
+                date_from?: string | null;
+                date_to?: string | null;
             };
             header?: never;
             path?: never;

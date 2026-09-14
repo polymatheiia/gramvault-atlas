@@ -136,7 +136,7 @@ class TestSemanticSearch:
         with patch(
             "gramvault.api.routes_chat.service.semantic_search",
             new_callable=AsyncMock,
-            return_value=[{"item": item, "score": 0.42, "snippet": "a mountain view"}],
+            return_value=([{"item": item, "score": 0.42, "snippet": "a mountain view"}], 1),
         ):
             response = client.get("/api/chat/search", params={"q": "mountain"})
 
@@ -145,6 +145,7 @@ class TestSemanticSearch:
         assert body["query"] == "mountain"
         assert body["results"][0]["item"]["id"] == 3
         assert body["results"][0]["score"] == 0.42
+        assert body["total"] == 1
 
     def test_ollama_not_running_is_503(self, client: TestClient) -> None:
         with patch(
@@ -165,7 +166,7 @@ class TestSemanticSearch:
         with patch(
             "gramvault.api.routes_chat.service.semantic_search",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value=([], 0),
         ) as mock_search:
             response = client.get("/api/chat/search", params={"q": "anything", "top_k": 5})
 
@@ -182,7 +183,7 @@ class TestSemanticSearch:
         with patch(
             "gramvault.api.routes_chat.service.semantic_search",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value=([], 0),
         ):
             response = client.get("/api/chat/search", params={"q": "anything", "top_k": 100})
         assert response.status_code == 200
@@ -190,3 +191,30 @@ class TestSemanticSearch:
     def test_top_k_above_the_cap_is_422(self, client: TestClient) -> None:
         response = client.get("/api/chat/search", params={"q": "anything", "top_k": 120})
         assert response.status_code == 422
+
+    def test_forwards_facets_as_search_filters(self, client: TestClient) -> None:
+        with patch(
+            "gramvault.api.routes_chat.service.semantic_search",
+            new_callable=AsyncMock,
+            return_value=([], 0),
+        ) as mock_search:
+            response = client.get(
+                "/api/chat/search",
+                params={
+                    "q": "anything",
+                    "category": "recipes",
+                    "author": "chef_alice",
+                    "media_type": "reel",
+                    "date_from": "2024-01-01T00:00:00",
+                    "date_to": "2024-12-31T00:00:00",
+                },
+            )
+
+        assert response.status_code == 200
+        _, kwargs = mock_search.call_args
+        filters = kwargs["filters"]
+        assert filters.category == "recipes"
+        assert filters.author == "chef_alice"
+        assert filters.media_type == "reel"
+        assert filters.date_from.startswith("2024-01-01")
+        assert filters.date_to.startswith("2024-12-31")

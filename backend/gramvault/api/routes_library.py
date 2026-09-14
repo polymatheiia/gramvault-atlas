@@ -148,6 +148,7 @@ def _category_row(conn: sqlite3.Connection, category_id: int) -> sqlite3.Row | N
 
 
 def _item_filter_sql(
+    conn: sqlite3.Connection,
     *,
     author: str | None,
     media_type: MediaType | None,
@@ -162,7 +163,7 @@ def _item_filter_sql(
     paginated listing and the id-only listing so both stay in lockstep."""
     clauses: list[str] = []
     params: list[object] = []
-    joins = ""
+    joins: list[str] = []
 
     if author:
         clauses.append("authors.username = ?")
@@ -176,8 +177,35 @@ def _item_filter_sql(
         clauses.append("items.category_id = (SELECT id FROM categories WHERE name = ?)")
         params.append(category)
     if q:
-        clauses.append("items.caption LIKE ?")
-        params.append(f"%{q}%")
+        # R12: this used to be caption-only LIKE even though the FTS5
+        # index (migration 006) already covers tags/transcript/vision/OCR
+        # text — that broader search was only reachable through the
+        # semantic endpoint. Same tokenizer as chat.retrieval.keyword_search,
+        # so the two behave consistently; LIKE is still the fallback for a
+        # DB predating migration 006 or a query with no word characters.
+        match_expr = fts.match_expr(q) if fts.ensure_populated(conn) else ""
+        if match_expr:
+            try:
+                # FTS5 treats a bare "AND"/"OR"/"NOT"/"NEAR" token as a
+                # query operator, not a search term — `match_expr("cats
+                # AND dogs")` produces `cats* AND* dogs*`, a syntax error
+                # (the operator followed by a stray `*`). keyword_search()
+                # already guards this with a try/except around the real
+                # query for the same reason; probe once here so a bad
+                # expression falls through to the LIKE branch below
+                # instead of 500ing the whole listing.
+                conn.execute(
+                    "SELECT 1 FROM items_fts WHERE items_fts MATCH ? LIMIT 1", (match_expr,)
+                )
+            except sqlite3.OperationalError:
+                match_expr = ""
+        if match_expr:
+            joins.append("JOIN items_fts ON items_fts.rowid = items.id")
+            clauses.append("items_fts MATCH ?")
+            params.append(match_expr)
+        else:
+            clauses.append("items.caption LIKE ?")
+            params.append(f"%{q}%")
     if needs_review:
         clauses.append(
             "items.category_id IS NOT NULL "
@@ -191,12 +219,14 @@ def _item_filter_sql(
         clauses.append("items.taken_at <= ?")
         params.append(date_to.isoformat())
     if tag:
-        joins = "JOIN item_tags ON item_tags.item_id = items.id JOIN tags ON tags.id = item_tags.tag_id"
+        joins.append(
+            "JOIN item_tags ON item_tags.item_id = items.id JOIN tags ON tags.id = item_tags.tag_id"
+        )
         clauses.append("tags.name = ?")
         params.append(tag)
 
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    return joins, where_sql, params
+    return " ".join(joins), where_sql, params
 
 
 _ITEM_ORDER = "ORDER BY items.imported_at DESC, items.id DESC"
@@ -238,18 +268,18 @@ async def list_items(
             items=items, total=len(items), page=1, page_size=max(1, len(items))
         )
 
-    joins, where_sql, params = _item_filter_sql(
-        author=author,
-        media_type=media_type,
-        tag=tag,
-        category=category,
-        q=q,
-        needs_review=needs_review,
-        date_from=date_from,
-        date_to=date_to,
-    )
-
     with session_scope(config) as conn:
+        joins, where_sql, params = _item_filter_sql(
+            conn,
+            author=author,
+            media_type=media_type,
+            tag=tag,
+            category=category,
+            q=q,
+            needs_review=needs_review,
+            date_from=date_from,
+            date_to=date_to,
+        )
         total_row = conn.execute(
             f"SELECT COUNT(DISTINCT items.id) AS c FROM items "
             f"LEFT JOIN authors ON authors.id = items.author_id {joins} {where_sql}",
@@ -308,17 +338,18 @@ async def list_item_ids(
     """Just the ordered item ids for a gallery filter (same order as
     `/items`). Powers the reels-style feed and prev/next navigation
     without shipping every item's full payload."""
-    joins, where_sql, params = _item_filter_sql(
-        author=author,
-        media_type=media_type,
-        tag=tag,
-        category=category,
-        q=q,
-        needs_review=needs_review,
-        date_from=date_from,
-        date_to=date_to,
-    )
     with session_scope(config) as conn:
+        joins, where_sql, params = _item_filter_sql(
+            conn,
+            author=author,
+            media_type=media_type,
+            tag=tag,
+            category=category,
+            q=q,
+            needs_review=needs_review,
+            date_from=date_from,
+            date_to=date_to,
+        )
         rows = conn.execute(
             f"SELECT DISTINCT items.id AS id FROM items "
             f"LEFT JOIN authors ON authors.id = items.author_id {joins} {where_sql} "

@@ -14,7 +14,7 @@ import pytest
 
 from gramvault.ai.embedding_store import QueryResult
 from gramvault.chat import retrieval
-from gramvault.chat.retrieval import RetrievalResult
+from gramvault.chat.retrieval import RetrievalResult, SearchFilters
 
 
 @pytest.fixture
@@ -181,6 +181,117 @@ class TestHybridSearch:
         item_ids = {r.item_id for r in results}
         assert item_id in item_ids  # keyword match
         assert other_id in item_ids  # vector match
+
+
+class TestFilterItemIds:
+    def test_narrows_to_matching_media_type_and_author(
+        self, tmp_db_conn: sqlite3.Connection
+    ) -> None:
+        photo_id = _insert_item(tmp_db_conn, caption="a photo", author_username="alice")
+        tmp_db_conn.execute("UPDATE items SET media_type = 'photo' WHERE id = ?", (photo_id,))
+        video_id = _insert_item(tmp_db_conn, caption="a video", author_username="alice")
+        tmp_db_conn.execute("UPDATE items SET media_type = 'video' WHERE id = ?", (video_id,))
+        other_author_id = _insert_item(tmp_db_conn, caption="a video too", author_username="bob")
+        tmp_db_conn.execute("UPDATE items SET media_type = 'video' WHERE id = ?", (other_author_id,))
+        tmp_db_conn.commit()
+
+        kept = retrieval.filter_item_ids(
+            tmp_db_conn,
+            [photo_id, video_id, other_author_id],
+            SearchFilters(media_type="video", author="alice"),
+        )
+
+        assert kept == {video_id}
+
+    def test_empty_filters_keeps_everything(self, tmp_db_conn: sqlite3.Connection) -> None:
+        item_id = _insert_item(tmp_db_conn, caption="x")
+        assert retrieval.filter_item_ids(tmp_db_conn, [item_id], SearchFilters()) == {item_id}
+
+    def test_empty_id_list_returns_empty_set(self, tmp_db_conn: sqlite3.Connection) -> None:
+        assert retrieval.filter_item_ids(tmp_db_conn, [], SearchFilters(author="alice")) == set()
+
+    def test_category_filter(self, tmp_db_conn: sqlite3.Connection) -> None:
+        item_id = _insert_item(tmp_db_conn, caption="a recipe")
+        category_id = tmp_db_conn.execute(
+            "SELECT id FROM categories WHERE name = 'recipes'"
+        ).fetchone()["id"]
+        tmp_db_conn.execute(
+            "UPDATE items SET category_id = ? WHERE id = ?", (category_id, item_id)
+        )
+        other_id = _insert_item(tmp_db_conn, caption="something else")
+        tmp_db_conn.commit()
+
+        kept = retrieval.filter_item_ids(
+            tmp_db_conn, [item_id, other_id], SearchFilters(category="recipes")
+        )
+
+        assert kept == {item_id}
+
+
+class TestHybridSearchFaceted:
+    @pytest.mark.anyio
+    async def test_filters_narrow_the_merged_results_and_report_a_total(
+        self, tmp_db_conn: sqlite3.Connection
+    ) -> None:
+        alice_id = _insert_item(tmp_db_conn, caption="a pasta recipe", author_username="alice")
+        bob_id = _insert_item(tmp_db_conn, caption="a pasta party", author_username="bob")
+
+        fake_vector_results = [
+            QueryResult(item_id=alice_id, media_file_id=None, score=0.9, snippet=None, metadata={}),
+            QueryResult(item_id=bob_id, media_file_id=None, score=0.8, snippet=None, metadata={}),
+        ]
+        with (
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock) as mock_embed,
+            patch.object(retrieval.embedding_store, "query", return_value=fake_vector_results),
+        ):
+            mock_embed.return_value = [0.1, 0.2, 0.3]
+            results, total = await retrieval.hybrid_search_faceted(
+                tmp_db_conn, "pasta", top_k=5, filters=SearchFilters(author="alice")
+            )
+
+        assert [r.item_id for r in results] == [alice_id]
+        assert total == 1
+
+    @pytest.mark.anyio
+    async def test_no_filters_matches_plain_hybrid_search(
+        self, tmp_db_conn: sqlite3.Connection
+    ) -> None:
+        item_id = _insert_item(tmp_db_conn, caption="a pasta recipe", tags=["pasta"])
+
+        with (
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock) as mock_embed,
+            patch.object(retrieval.embedding_store, "query", return_value=[]),
+        ):
+            mock_embed.return_value = [0.1, 0.2, 0.3]
+            results, total = await retrieval.hybrid_search_faceted(tmp_db_conn, "pasta", top_k=5)
+
+        assert [r.item_id for r in results] == [item_id]
+        assert total == 1
+
+    @pytest.mark.anyio
+    async def test_total_reflects_the_search_window_not_just_len_results(
+        self, tmp_db_conn: sqlite3.Connection
+    ) -> None:
+        """`total` is the merged-candidate count before the final top_k
+        truncation (bounded by the fan-out window), not a full-library
+        count — it can exceed len(results) even with no facets applied."""
+        ids = [
+            _insert_item(tmp_db_conn, caption=f"pasta variant {i}", author_username=f"chef{i}")
+            for i in range(3)
+        ]
+        fake_vector_results = [
+            QueryResult(item_id=item_id, media_file_id=None, score=0.9 - i * 0.1, snippet=None, metadata={})
+            for i, item_id in enumerate(ids)
+        ]
+        with (
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock) as mock_embed,
+            patch.object(retrieval.embedding_store, "query", return_value=fake_vector_results),
+        ):
+            mock_embed.return_value = [0.1, 0.2, 0.3]
+            results, total = await retrieval.hybrid_search_faceted(tmp_db_conn, "pasta", top_k=2)
+
+        assert len(results) == 2
+        assert total == 3
 
 
 class TestFetchItems:

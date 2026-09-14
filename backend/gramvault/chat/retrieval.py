@@ -20,7 +20,6 @@ Merge/rerank strategy (intentionally simple, not "academic"):
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -29,12 +28,6 @@ from gramvault.ai.providers import get_provider
 from gramvault.chat import fts
 from gramvault.config import Config, get_config
 from gramvault.models.schemas import Author, Item, MediaFile, Tag
-
-# Split a free-text query into tokens for an FTS5 MATCH expression. `\w`
-# under Python 3's default `re.UNICODE` keeps letters/digits of any script
-# (the corpus is multilingual), so operators/punctuation that would
-# otherwise be interpreted by FTS5 are dropped.
-_FTS_TOKEN_SPLIT = re.compile(r"\W+", re.UNICODE)
 
 # Flat bonus applied when an item appears in both the vector and keyword
 # result sets (see module docstring, step 3).
@@ -62,6 +55,59 @@ class RetrievalResult:
     sources: set[str] = field(default_factory=set)
 
 
+@dataclass
+class SearchFilters:
+    """Gallery-style facets for `hybrid_search_faceted` (R13 — semantic
+    search used to ignore every gallery filter). `date_from`/`date_to` are
+    ISO8601 strings, matching `items.taken_at`'s stored format."""
+
+    category: str | None = None
+    author: str | None = None
+    media_type: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+
+    def is_empty(self) -> bool:
+        return not any(
+            (self.category, self.author, self.media_type, self.date_from, self.date_to)
+        )
+
+
+def filter_item_ids(
+    conn: sqlite3.Connection, item_ids: list[int], filters: SearchFilters
+) -> set[int]:
+    """Which of `item_ids` also satisfy `filters` — a plain SQL narrowing
+    of a semantic-search candidate set, same fields as the gallery's own
+    filters (`api/routes_library.py::_item_filter_sql`)."""
+    if not item_ids or filters.is_empty():
+        return set(item_ids)
+
+    clauses: list[str] = [f"items.id IN ({','.join('?' * len(item_ids))})"]
+    params: list[object] = list(item_ids)
+    joins = ""
+    if filters.author:
+        joins = "LEFT JOIN authors ON authors.id = items.author_id"
+        clauses.append("authors.username = ?")
+        params.append(filters.author)
+    if filters.media_type:
+        clauses.append("items.media_type = ?")
+        params.append(filters.media_type)
+    if filters.category:
+        clauses.append("items.category_id = (SELECT id FROM categories WHERE name = ?)")
+        params.append(filters.category)
+    if filters.date_from:
+        clauses.append("items.taken_at >= ?")
+        params.append(filters.date_from)
+    if filters.date_to:
+        clauses.append("items.taken_at <= ?")
+        params.append(filters.date_to)
+
+    rows = conn.execute(
+        f"SELECT items.id AS id FROM items {joins} WHERE {' AND '.join(clauses)}", params
+    ).fetchall()
+    return {row["id"] for row in rows}
+
+
 async def embed_query(query: str, config: Config | None = None) -> list[float]:
     """Embed the user's free-text query with the configured embedding
     provider/model. Propagates `ProviderNotReadyError`."""
@@ -87,14 +133,6 @@ def vector_search(
     ]
 
 
-def _fts_match_expr(query: str) -> str:
-    """Turn a free-text query into an FTS5 MATCH string: each token
-    prefix-matched (`term*`) and AND-ed. Empty if the query has no
-    word characters."""
-    tokens = [t for t in _FTS_TOKEN_SPLIT.split(query) if t]
-    return " ".join(f"{t}*" for t in tokens)
-
-
 def keyword_search(conn: sqlite3.Connection, query: str, limit: int = 20) -> list[RetrievalResult]:
     """Keyword pass over caption / author / tags / transcript / vision /
     OCR text. Uses the `items_fts` FTS5 index (migration 006); falls back
@@ -104,7 +142,7 @@ def keyword_search(conn: sqlite3.Connection, query: str, limit: int = 20) -> lis
     if not query:
         return []
 
-    match_expr = _fts_match_expr(query)
+    match_expr = fts.match_expr(query)
     if match_expr and fts.ensure_populated(conn):
         try:
             rows = conn.execute(
@@ -234,6 +272,40 @@ def merge_results(
     return merged[:top_k]
 
 
+async def hybrid_search_faceted(
+    conn: sqlite3.Connection,
+    query: str,
+    top_k: int = 8,
+    config: Config | None = None,
+    *,
+    filters: SearchFilters | None = None,
+) -> tuple[list[RetrievalResult], int]:
+    """Like `hybrid_search`, but also narrows the merged candidates to
+    `filters` (R13 — semantic search used to ignore every gallery filter
+    except a client-side category filter over the results already
+    returned). Filtering happens over a wider fan-out (`top_k*3` instead
+    of the unfiltered `top_k*2`) so a facet doesn't just shrink the same
+    small candidate pool down to almost nothing.
+
+    Returns `(results, total)`: `results` is the same "merged, reranked,
+    deduped top `top_k`" contract as `hybrid_search`; `total` is the
+    filtered candidate count *before* that final truncation — bounded by
+    the fan-out window, not a full-library count (semantic search doesn't
+    scan the whole library, so there's no cheap exact total to report).
+    """
+    config = config or get_config()
+    query_embedding = await embed_query(query, config=config)
+    has_filters = filters is not None and not filters.is_empty()
+    fan_out = top_k * 3 if has_filters else top_k * 2
+    vector_results = vector_search(query_embedding, top_k=fan_out, config=config)
+    keyword_results = keyword_search(conn, query, limit=fan_out)
+    merged = merge_results(vector_results, keyword_results, top_k=fan_out)
+    if has_filters:
+        keep_ids = filter_item_ids(conn, [r.item_id for r in merged], filters)
+        merged = [r for r in merged if r.item_id in keep_ids]
+    return merged[:top_k], len(merged)
+
+
 async def hybrid_search(
     conn: sqlite3.Connection,
     query: str,
@@ -242,11 +314,8 @@ async def hybrid_search(
 ) -> list[RetrievalResult]:
     """Embed `query`, run vector + keyword search, and return the merged,
     reranked, deduped top `top_k` results."""
-    config = config or get_config()
-    query_embedding = await embed_query(query, config=config)
-    vector_results = vector_search(query_embedding, top_k=top_k * 2, config=config)
-    keyword_results = keyword_search(conn, query, limit=top_k * 2)
-    return merge_results(vector_results, keyword_results, top_k=top_k)
+    results, _total = await hybrid_search_faceted(conn, query, top_k, config)
+    return results
 
 
 def fetch_items(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, Item]:
