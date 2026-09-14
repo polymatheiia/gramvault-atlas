@@ -165,6 +165,8 @@ class Item(ORMBase):
     category_source: CategorySource | None = None
     category_confidence: float | None = None
     category_reason: str | None = None  # why the classifier chose it (review queue)
+    favourite: bool = False
+    user_note: str | None = None
     tags: list[Tag] = Field(default_factory=list)
     media_files: list[MediaFile] = Field(default_factory=list)
 

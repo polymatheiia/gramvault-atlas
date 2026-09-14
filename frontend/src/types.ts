@@ -105,8 +105,15 @@ export interface Item {
   category_confidence: number | null
   /** Why the classifier chose this category (keyword hits or LLM rationale). */
   category_reason: string | null
+  favourite: boolean
+  user_note: string | null
   tags: Tag[]
   media_files: MediaFile[]
+}
+
+export interface ItemMetaUpdateRequest {
+  favourite?: boolean | null
+  user_note?: string | null
 }
 
 export interface ImportJob {
@@ -506,6 +513,7 @@ export interface LibraryItemFilters {
   q?: string
   date_from?: string
   date_to?: string
+  favourite?: boolean
   page?: number
   page_size?: number
 }

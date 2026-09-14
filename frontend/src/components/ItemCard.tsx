@@ -44,8 +44,13 @@ export function ItemCard({ item, contextSearch = '' }: { item: Item; contextSear
       to={`/items/${item.id}${contextSearch}`}
       className="card group flex flex-col overflow-hidden no-underline transition-colors hover:border-accent/60"
     >
-      <div className="aspect-square w-full overflow-hidden bg-surface-overlay">
+      <div className="relative aspect-square w-full overflow-hidden bg-surface-overlay">
         <Thumbnail item={item} />
+        {item.favourite && (
+          <span className="absolute right-1.5 top-1.5 text-amber-300 drop-shadow" title="Favourite" aria-label="Favourite">
+            ★
+          </span>
+        )}
       </div>
       <div className="flex flex-1 flex-col gap-1.5 p-3">
         <div className="flex flex-wrap items-center justify-between gap-1.5">

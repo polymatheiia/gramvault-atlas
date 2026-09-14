@@ -12,7 +12,7 @@ type SemanticSearchResponse = Schemas['SemanticSearchResponse']
  * (which is already ordered by relevance) — both travel with the other
  * filters so a shared link reproduces the same result set. */
 const FILTER_KEYS = [
-  'author', 'media_type', 'tag', 'category', 'date_from', 'date_to', 'search', 'mode', 'sort',
+  'author', 'media_type', 'tag', 'category', 'date_from', 'date_to', 'favourite', 'search', 'mode', 'sort',
 ] as const
 
 export const UNCATEGORIZED = '__uncategorized__'
@@ -84,9 +84,15 @@ export async function fetchSiblingIds(
     return results.map((r) => r.item.id).filter((id): id is number => id != null)
   }
 
+  const favourite = params.get('favourite') === '1'
   const res = await api.get<ItemIdListResponse>(
     '/api/library/item-ids',
-    { ...facetParams(params), ...(search ? { q: search } : {}), sort: itemSortOf(params) },
+    {
+      ...facetParams(params),
+      ...(search ? { q: search } : {}),
+      ...(favourite ? { favourite: true } : {}),
+      sort: itemSortOf(params),
+    },
     signal,
   )
   return res.ids

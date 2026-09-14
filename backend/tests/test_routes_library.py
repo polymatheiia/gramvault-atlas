@@ -374,6 +374,40 @@ def test_patch_item_category_404_for_unknown_item(client: TestClient) -> None:
     assert client.patch("/api/library/items/424242", json={"category_id": None}).status_code == 404
 
 
+def test_patch_item_meta_sets_favourite_and_note(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_library(tmp_config)
+    item_id = ids["item1_id"]
+
+    res = client.patch(f"/api/library/items/{item_id}/meta", json={"favourite": True, "user_note": "watch again"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["favourite"] is True
+    assert body["user_note"] == "watch again"
+
+    # A field left unset stays unchanged.
+    res2 = client.patch(f"/api/library/items/{item_id}/meta", json={"favourite": False})
+    assert res2.json()["favourite"] is False
+    assert res2.json()["user_note"] == "watch again"
+
+    # An explicit empty string clears the note.
+    res3 = client.patch(f"/api/library/items/{item_id}/meta", json={"user_note": ""})
+    assert res3.json()["user_note"] is None
+
+
+def test_patch_item_meta_404_for_unknown_item(client: TestClient) -> None:
+    assert client.patch("/api/library/items/424242/meta", json={"favourite": True}).status_code == 404
+
+
+def test_list_items_filter_by_favourite(client: TestClient, tmp_config: Config) -> None:
+    ids = _seed_library(tmp_config)
+    client.patch(f"/api/library/items/{ids['item1_id']}/meta", json={"favourite": True})
+
+    res = client.get("/api/library/items?favourite=true")
+    body = res.json()
+    assert body["total"] == 1
+    assert body["items"][0]["id"] == ids["item1_id"]
+
+
 def test_create_rename_and_delete_category(client: TestClient, tmp_config: Config) -> None:
     ids = _seed_categorised(tmp_config)
 

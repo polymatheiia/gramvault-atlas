@@ -118,6 +118,7 @@ export function Gallery() {
   const category = searchParams.get('category') ?? ''
   const dateFrom = searchParams.get('date_from') ?? ''
   const dateTo = searchParams.get('date_to') ?? ''
+  const favouriteOnly = searchParams.get('favourite') === '1'
   const search = searchParams.get('search') ?? ''
   const mode = searchModeOf(searchParams)
   const sort = itemSortOf(searchParams)
@@ -241,6 +242,7 @@ export function Gallery() {
             date_from: dateFrom || undefined,
             date_to: dateTo || undefined,
             q: search || undefined,
+            favourite: favouriteOnly || undefined,
             sort,
             page: pageNum,
             page_size: PAGE_SIZE,
@@ -280,7 +282,7 @@ export function Gallery() {
     void runQuery({ replace: true, page: 1, topK: PAGE_SIZE, signal: controller.signal })
     return () => controller.abort()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [author, mediaType, tag, category, dateFrom, dateTo, search, mode, sort])
+  }, [author, mediaType, tag, category, dateFrom, dateTo, favouriteOnly, search, mode, sort])
 
   function loadMore() {
     if (search && mode === 'semantic') {
@@ -310,7 +312,17 @@ export function Gallery() {
     })
   }
 
-  const hasFilters = !!(author || mediaType || tag || category || dateFrom || dateTo || search || sort !== 'saved_date')
+  const hasFilters = !!(
+    author ||
+    mediaType ||
+    tag ||
+    category ||
+    dateFrom ||
+    dateTo ||
+    favouriteOnly ||
+    search ||
+    sort !== 'saved_date'
+  )
 
   function toggleSelect(index: number, item: Item, shiftKey: boolean) {
     if (item.id == null) return
@@ -445,6 +457,18 @@ export function Gallery() {
                 Keyword
               </button>
             </div>
+          )}
+          {!(search && mode === 'semantic') && (
+            <button
+              type="button"
+              className={`btn-secondary shrink-0 ${favouriteOnly ? 'text-amber-300' : ''}`}
+              title="Favourites only"
+              aria-label="Favourites only"
+              aria-pressed={favouriteOnly}
+              onClick={() => updateFilter('favourite', favouriteOnly ? '' : '1')}
+            >
+              {favouriteOnly ? '★' : '☆'}
+            </button>
           )}
           <button
             type="button"

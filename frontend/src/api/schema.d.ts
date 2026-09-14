@@ -847,6 +847,26 @@ export interface paths {
         patch: operations["update_item_category_api_library_items__item_id__patch"];
         trace?: never;
     };
+    "/api/library/items/{item_id}/meta": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Item Meta
+         * @description Favourite flag / user note (Phase 4 feature — audit §5.1).
+         */
+        patch: operations["update_item_meta_api_library_items__item_id__meta_patch"];
+        trace?: never;
+    };
     "/api/library/items/{item_id}/similar": {
         parameters: {
             query?: never;
@@ -1740,6 +1760,11 @@ export interface components {
             enrichment_status: components["schemas"]["EnrichmentStatus"];
             /** External Id */
             external_id?: string | null;
+            /**
+             * Favourite
+             * @default false
+             */
+            favourite: boolean;
             /** Id */
             id?: number | null;
             /** Import Job Id */
@@ -1755,6 +1780,8 @@ export interface components {
             tags?: components["schemas"]["Tag"][];
             /** Taken At */
             taken_at?: string | null;
+            /** User Note */
+            user_note?: string | null;
         };
         /** ItemCategoryUpdateRequest */
         ItemCategoryUpdateRequest: {
@@ -1778,6 +1805,18 @@ export interface components {
             page_size: number;
             /** Total */
             total: number;
+        };
+        /**
+         * ItemMetaUpdateRequest
+         * @description Favourite flag and free-text note — no cascading side effects,
+         *     unlike category (see update_item_category). A field left unset (None)
+         *     is left unchanged; to actually clear the note, send `user_note: ""`.
+         */
+        ItemMetaUpdateRequest: {
+            /** Favourite */
+            favourite?: boolean | null;
+            /** User Note */
+            user_note?: string | null;
         };
         /**
          * Job
@@ -3552,6 +3591,7 @@ export interface operations {
                 category?: string | null;
                 q?: string | null;
                 needs_review?: boolean;
+                favourite?: boolean;
                 date_from?: string | null;
                 date_to?: string | null;
                 sort?: "saved_date" | "posted_date" | "author" | "relevance";
@@ -3600,6 +3640,8 @@ export interface operations {
                 ids?: string | null;
                 /** @description Only items with a low-confidence automatic category (the review queue) */
                 needs_review?: boolean;
+                /** @description Only favourited items */
+                favourite?: boolean;
                 date_from?: string | null;
                 date_to?: string | null;
                 /** @description 'relevance' falls back to 'saved_date' when there's no q= to rank against */
@@ -3705,6 +3747,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ItemCategoryUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Item"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_item_meta_api_library_items__item_id__meta_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                item_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ItemMetaUpdateRequest"];
             };
         };
         responses: {

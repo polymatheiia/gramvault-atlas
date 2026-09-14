@@ -30,6 +30,10 @@ describe('filterSearch', () => {
   it('carries sort too', () => {
     expect(filterSearch(new URLSearchParams('sort=author'))).toBe('?sort=author')
   })
+
+  it('carries favourite too', () => {
+    expect(filterSearch(new URLSearchParams('favourite=1'))).toBe('?favourite=1')
+  })
 })
 
 describe('fetchSiblingIds', () => {
@@ -133,6 +137,24 @@ describe('fetchSiblingIds', () => {
     expect(api.get).toHaveBeenCalledWith(
       '/api/library/item-ids',
       { sort: 'author' },
+      undefined,
+    )
+  })
+
+  it('forwards favourite=true for browse mode when set, and omits it otherwise', async () => {
+    vi.mocked(api.get).mockResolvedValue({ ids: [1], total: 1 })
+
+    await fetchSiblingIds(new URLSearchParams('favourite=1'))
+    expect(api.get).toHaveBeenCalledWith(
+      '/api/library/item-ids',
+      { favourite: true, sort: 'saved_date' },
+      undefined,
+    )
+
+    await fetchSiblingIds(new URLSearchParams(''))
+    expect(api.get).toHaveBeenLastCalledWith(
+      '/api/library/item-ids',
+      { sort: 'saved_date' },
       undefined,
     )
   })

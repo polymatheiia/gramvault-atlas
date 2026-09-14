@@ -1689,6 +1689,11 @@
             ],
             "title": "External Id"
           },
+          "favourite": {
+            "default": false,
+            "title": "Favourite",
+            "type": "boolean"
+          },
           "id": {
             "anyOf": [
               {
@@ -1762,6 +1767,17 @@
               }
             ],
             "title": "Taken At"
+          },
+          "user_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Note"
           }
         },
         "required": [
@@ -1837,6 +1853,35 @@
           "page_size"
         ],
         "title": "ItemListResponse",
+        "type": "object"
+      },
+      "ItemMetaUpdateRequest": {
+        "description": "Favourite flag and free-text note \u2014 no cascading side effects,\nunlike category (see update_item_category). A field left unset (None)\nis left unchanged; to actually clear the note, send `user_note: \"\"`.",
+        "properties": {
+          "favourite": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Favourite"
+          },
+          "user_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Note"
+          }
+        },
+        "title": "ItemMetaUpdateRequest",
         "type": "object"
       },
       "Job": {
@@ -5134,6 +5179,16 @@
           },
           {
             "in": "query",
+            "name": "favourite",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Favourite",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
             "name": "date_from",
             "required": false,
             "schema": {
@@ -5345,6 +5400,18 @@
               "default": false,
               "description": "Only items with a low-confidence automatic category (the review queue)",
               "title": "Needs Review",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Only favourited items",
+            "in": "query",
+            "name": "favourite",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Only favourited items",
+              "title": "Favourite",
               "type": "boolean"
             }
           },
@@ -5575,6 +5642,59 @@
           }
         },
         "summary": "Update Item Category",
+        "tags": [
+          "library"
+        ]
+      }
+    },
+    "/api/library/items/{item_id}/meta": {
+      "patch": {
+        "description": "Favourite flag / user note (Phase 4 feature \u2014 audit \u00a75.1).",
+        "operationId": "update_item_meta_api_library_items__item_id__meta_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "item_id",
+            "required": true,
+            "schema": {
+              "title": "Item Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ItemMetaUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Item"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Item Meta",
         "tags": [
           "library"
         ]

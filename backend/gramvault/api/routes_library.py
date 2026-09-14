@@ -70,6 +70,15 @@ class ItemCategoryUpdateRequest(BaseModel):
     category_id: int | None = None
 
 
+class ItemMetaUpdateRequest(BaseModel):
+    """Favourite flag and free-text note — no cascading side effects,
+    unlike category (see update_item_category). A field left unset (None)
+    is left unchanged; to actually clear the note, send `user_note: ""`."""
+
+    favourite: bool | None = None
+    user_note: str | None = None
+
+
 class CategoryCreateRequest(BaseModel):
     name: str
     description: str | None = None
@@ -137,6 +146,8 @@ def _row_to_item(conn: sqlite3.Connection, row: sqlite3.Row) -> Item:
         category_source=data.get("category_source"),
         category_confidence=data.get("category_confidence"),
         category_reason=data.get("category_reason"),
+        favourite=bool(data.get("favourite")),
+        user_note=data.get("user_note"),
         tags=_fetch_tags(conn, data["id"]),
         media_files=_fetch_media_files(conn, data["id"]),
     )
@@ -160,6 +171,7 @@ def _item_filter_sql(
     needs_review: bool,
     date_from: datetime | None,
     date_to: datetime | None,
+    favourite: bool = False,
 ) -> tuple[str, str, list[object], bool]:
     """Shared gallery filter → `(joins, where_sql, params, used_fts)`. Used
     by the paginated listing and the id-only listing so both stay in
@@ -218,6 +230,8 @@ def _item_filter_sql(
             "AND COALESCE(items.category_source, '') != 'manual' "
             "AND COALESCE(items.category_confidence, 0) < 0.6"
         )
+    if favourite:
+        clauses.append("items.favourite = 1")
     if date_from:
         clauses.append("items.taken_at >= ?")
         params.append(date_from.isoformat())
@@ -274,6 +288,7 @@ async def list_items(
         default=False,
         description="Only items with a low-confidence automatic category (the review queue)",
     ),
+    favourite: bool = Query(default=False, description="Only favourited items"),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
     sort: ItemSort = Query(
@@ -306,6 +321,7 @@ async def list_items(
             needs_review=needs_review,
             date_from=date_from,
             date_to=date_to,
+            favourite=favourite,
         )
         order_sql = _order_sql(sort, used_fts)
         total_row = conn.execute(
@@ -358,6 +374,7 @@ async def list_item_ids(
     category: str | None = Query(default=None),
     q: str | None = Query(default=None),
     needs_review: bool = Query(default=False),
+    favourite: bool = Query(default=False),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
     sort: ItemSort = Query(default="saved_date"),
@@ -376,6 +393,7 @@ async def list_item_ids(
             category=category,
             q=q,
             needs_review=needs_review,
+            favourite=favourite,
             date_from=date_from,
             date_to=date_to,
         )
@@ -635,6 +653,34 @@ async def update_item_category(
                 "category_updated_at = datetime('now') WHERE id = ?",
                 (body.category_id, item_id),
             )
+
+        row = conn.execute(f"{_ITEM_SELECT} WHERE items.id = ?", (item_id,)).fetchone()
+        item = _row_to_item(conn, row)
+    return item
+
+
+@router.patch("/items/{item_id}/meta", response_model=Item)
+async def update_item_meta(
+    item_id: int,
+    body: ItemMetaUpdateRequest,
+    config: Config = Depends(get_config_dependency),
+) -> Item:
+    """Favourite flag / user note (Phase 4 feature — audit §5.1)."""
+    with session_scope(config) as conn:
+        if conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone() is None:
+            raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
+
+        sets: list[str] = []
+        params: list[object] = []
+        if body.favourite is not None:
+            sets.append("favourite = ?")
+            params.append(1 if body.favourite else 0)
+        if body.user_note is not None:
+            sets.append("user_note = ?")
+            params.append(body.user_note or None)
+        if sets:
+            params.append(item_id)
+            conn.execute(f"UPDATE items SET {', '.join(sets)} WHERE id = ?", params)
 
         row = conn.execute(f"{_ITEM_SELECT} WHERE items.id = ?", (item_id,)).fetchone()
         item = _row_to_item(conn, row)

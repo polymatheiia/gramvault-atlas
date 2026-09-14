@@ -50,13 +50,16 @@ CREATE TABLE IF NOT EXISTS items (
     category_source     TEXT CHECK (category_source IN ('keyword', 'llm', 'manual')),
     category_confidence REAL,
     category_reason     TEXT,
-    category_updated_at TEXT
+    category_updated_at TEXT,
+    favourite           INTEGER NOT NULL DEFAULT 0, -- migration 009
+    user_note           TEXT                        -- migration 009
 );
 
 CREATE INDEX IF NOT EXISTS idx_items_author_id ON items(author_id);
 CREATE INDEX IF NOT EXISTS idx_items_enrichment_status ON items(enrichment_status);
 CREATE INDEX IF NOT EXISTS idx_items_import_job_id ON items(import_job_id);
 CREATE INDEX IF NOT EXISTS idx_items_category_id ON items(category_id);
+CREATE INDEX IF NOT EXISTS idx_items_favourite ON items(favourite);
 
 -- Individual media files belonging to an item (photo, or video + optional
 -- extracted keyframes are tracked separately by the enrichment pipeline,

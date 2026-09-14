@@ -118,11 +118,13 @@ export function ItemDetail() {
       if (e.key === 'ArrowLeft' && prevId != null) navigate(`/items/${prevId}${ctx}`)
       if (e.key === 'ArrowRight' && nextId != null) navigate(`/items/${nextId}${ctx}`)
       if (e.key === 'c') setCategoryFocusRequest((n) => n + 1)
+      if (e.key === 'f' && item) void saveMeta({ favourite: !item.favourite })
       if (e.key === '?') setShowShortcuts((v) => !v)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [prevId, nextId, ctx, navigate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prevId, nextId, ctx, navigate, item])
 
   const [tagInput, setTagInput] = useState('')
   const [savingTags, setSavingTags] = useState(false)
@@ -145,6 +147,9 @@ export function ItemDetail() {
 
   const [deleting, setDeleting] = useState(false)
 
+  const [noteInput, setNoteInput] = useState('')
+  const [savingMeta, setSavingMeta] = useState(false)
+
   useEffect(() => {
     api
       .get<CategoryListResponse>('/api/library/categories')
@@ -159,7 +164,10 @@ export function ItemDetail() {
     setError(null)
     api
       .get<Item>(`/api/library/items/${id}`, undefined, controller.signal)
-      .then(setItem)
+      .then((i) => {
+        setItem(i)
+        setNoteInput(i.user_note ?? '')
+      })
       .catch((err) => {
         if (controller.signal.aborted) return
         setError(isNotFound(err) ? 'Item not found.' : err instanceof Error ? err.message : 'Failed to load item')
@@ -197,6 +205,19 @@ export function ItemDetail() {
     if (!item) return
     const manual = item.tags.filter((t) => t.kind === 'manual' && t.name !== name).map((t) => t.name)
     void saveTags(manual)
+  }
+
+  async function saveMeta(body: { favourite?: boolean; user_note?: string }) {
+    if (!id) return
+    setSavingMeta(true)
+    try {
+      const updated = await api.patch<Item>(`/api/library/items/${id}/meta`, body)
+      setItem(updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save')
+    } finally {
+      setSavingMeta(false)
+    }
   }
 
   async function saveCategory(categoryId: number | null) {
@@ -289,6 +310,17 @@ export function ItemDetail() {
         </Link>
         <div className="flex items-center gap-2 text-sm">
           {position && <span className="text-slate-500">{position}</span>}
+          <button
+            type="button"
+            className={`btn-secondary ${item.favourite ? 'text-amber-300' : ''}`}
+            title="Favourite (f)"
+            aria-label={item.favourite ? 'Remove favourite' : 'Add favourite'}
+            aria-pressed={item.favourite}
+            disabled={savingMeta}
+            onClick={() => void saveMeta({ favourite: !item.favourite })}
+          >
+            {item.favourite ? '★' : '☆'}
+          </button>
           {prevId != null ? (
             <Link to={`/items/${prevId}${ctx}`} className="btn-secondary" title="Previous (←)" aria-label="Previous item">
               ←
@@ -326,6 +358,7 @@ export function ItemDetail() {
         <div className="card flex flex-wrap gap-x-6 gap-y-1 px-4 py-3 text-sm text-slate-400">
           <span><kbd className="badge bg-surface-overlay">←</kbd> / <kbd className="badge bg-surface-overlay">→</kbd> previous / next item</span>
           <span><kbd className="badge bg-surface-overlay">c</kbd> focus category picker</span>
+          <span><kbd className="badge bg-surface-overlay">f</kbd> toggle favourite</span>
           <span><kbd className="badge bg-surface-overlay">?</kbd> toggle this panel</span>
         </div>
       )}
@@ -445,6 +478,20 @@ export function ItemDetail() {
               Add
             </button>
           </form>
+        </div>
+
+        <div className="flex flex-col gap-2 border-t border-surface-border pt-3">
+          <span className="label">Note</span>
+          <textarea
+            className="input min-h-16"
+            placeholder="Private note — not shared with the model, exported into your Obsidian note's own tail"
+            value={noteInput}
+            onChange={(e) => setNoteInput(e.target.value)}
+            onBlur={() => {
+              if (noteInput !== (item.user_note ?? '')) void saveMeta({ user_note: noteInput })
+            }}
+            disabled={savingMeta}
+          />
         </div>
       </div>
 
