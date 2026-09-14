@@ -30,6 +30,7 @@ from pathlib import Path
 from gramvault.chat import fts
 from gramvault.config import Config, get_config
 from gramvault.db.session import session_scope
+from gramvault.ingestion import mediainfo
 from gramvault.ingestion.organizer import organize_zip_member
 from gramvault.ingestion.parser import ExportFormatError, OwnPost, SavedItem, parse_export
 from gramvault.models.schemas import ImportJob, JobStatus
@@ -219,11 +220,16 @@ def _import_own_post(
         )
         if organized is None:
             continue
+        # R11: width/height/duration_seconds were in the schema but never
+        # populated — nothing called ffprobe. Best-effort (None on
+        # failure/missing ffprobe): metadata, not required for the row.
+        dims = mediainfo.probe(library_dir / organized.file_path)
         conn.execute(
             """
             INSERT INTO media_files
-                (item_id, file_path, media_type, sequence_index, checksum)
-            VALUES (?, ?, ?, ?, ?)
+                (item_id, file_path, media_type, sequence_index, checksum,
+                 width, height, duration_seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item_id,
@@ -231,6 +237,9 @@ def _import_own_post(
                 media.file_type.value,
                 media.sequence_index,
                 organized.checksum,
+                dims.width if dims else None,
+                dims.height if dims else None,
+                dims.duration_seconds if dims else None,
             ),
         )
 

@@ -85,6 +85,25 @@ class VideoConfig(BaseModel):
     max_keyframes: int = 6
 
 
+class TranscriptionConfig(BaseModel):
+    """faster-whisper settings (audit finding R15 — these used to be read
+    directly from GRAMVAULT_WHISPER_* environment variables, bypassing the
+    config system entirely). Still overridable per-field via the standard
+    GRAMVAULT_TRANSCRIPTION__<FIELD> scheme, just through Config now."""
+
+    # "turbo" (large-v3-turbo) rather than a smaller model: on non-English
+    # audio the small models don't degrade gracefully, they produce
+    # confident non-words — measured once, Ukrainian "толерантність ... ГБТ
+    # спільноти" came back from `small` as "певерантність ... вибетестлю
+    # ноти". Wrong text is worse than no text once it's embedded, and it's
+    # indistinguishable from real text downstream. Turbo costs roughly 2x
+    # the wall clock on CPU; set model_size: small to trade that back if
+    # the library is predominantly English.
+    model_size: str = "turbo"
+    device: str = "cpu"
+    compute_type: str = "int8"
+
+
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = 8000
@@ -215,6 +234,7 @@ class Config(BaseModel):
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     video: VideoConfig = Field(default_factory=VideoConfig)
+    transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)

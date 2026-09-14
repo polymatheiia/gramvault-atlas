@@ -7,9 +7,13 @@ hash.
 from __future__ import annotations
 
 import json
+import subprocess
 import zipfile
 from pathlib import Path
 
+import pytest
+
+from gramvault.ai.keyframes import ffmpeg_available
 from gramvault.config import Config
 from gramvault.db.session import session_scope
 from gramvault.ingestion.importer import (
@@ -19,6 +23,8 @@ from gramvault.ingestion.importer import (
     run_import,
 )
 from gramvault.models.schemas import JobStatus
+
+needs_ffmpeg = pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg/ffprobe not on PATH")
 
 
 def _write_saved_export(tmp_path: Path, name: str = "export.zip") -> Path:
@@ -139,6 +145,46 @@ def test_import_own_posts_organizes_media_by_hash(tmp_path: Path, tmp_config: Co
         media_path = tmp_config.resolved_library_dir / row["file_path"]
         assert media_path.is_file()
         assert row["checksum"] in row["file_path"]  # organized under a hash-based path
+
+
+@needs_ffmpeg
+def test_import_own_posts_populates_media_dimensions_via_ffprobe(
+    tmp_path: Path, tmp_config: Config
+) -> None:
+    """R11: width/height/duration_seconds were in the schema but never
+    populated — ffprobe is now called at import time (importer.py)."""
+    jpeg_path = tmp_path / "real.jpg"
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=size=32x24", "-frames:v", "1", str(jpeg_path)],
+        capture_output=True,
+        check=True,
+    )
+    real_jpeg_bytes = jpeg_path.read_bytes()
+
+    posts_json = json.dumps(
+        [
+            {
+                "title": "a real photo",
+                "creation_timestamp": 1700000000,
+                "media": [{"uri": "media/posts/202301/real.jpg", "creation_timestamp": 1700000000}],
+            }
+        ]
+    )
+    zip_path = tmp_path / "own_export_real.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("your_instagram_activity/media/posts_1.json", posts_json)
+        zf.writestr("media/posts/202301/real.jpg", real_jpeg_bytes)
+
+    job = import_zip(zip_path, tmp_config)
+    assert job.status == JobStatus.DONE
+
+    with session_scope(tmp_config) as conn:
+        row = conn.execute(
+            "SELECT width, height FROM media_files WHERE item_id = "
+            "(SELECT id FROM items ORDER BY id DESC LIMIT 1)"
+        ).fetchone()
+
+    assert (row["width"], row["height"]) == (32, 24)
 
 
 def test_reimport_own_posts_does_not_duplicate_media_bytes_on_disk(

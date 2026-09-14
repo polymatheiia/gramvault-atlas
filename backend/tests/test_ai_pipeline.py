@@ -16,7 +16,7 @@ import pytest
 
 from gramvault.ai import pipeline
 from gramvault.ai.ollama_client import OllamaNotRunningError
-from gramvault.ai.transcription import TranscriptionResult
+from gramvault.ai.transcription import TranscriptionResult, TranscriptSegment
 from gramvault.chat.retrieval import fetch_items
 from gramvault.config import Config
 from gramvault.db.session import session_scope
@@ -164,6 +164,99 @@ class TestProcessItemVideo:
         assert mock_caption.await_count == 2
         mock_transcribe.assert_called_once()
         mock_upsert.assert_called()
+
+    @pytest.mark.anyio
+    async def test_transcription_persists_segments_and_model(
+        self, tmp_config: Config, tmp_path
+    ) -> None:
+        """R11: faster-whisper's timed segments used to be discarded —
+        only the flattened text was kept. transcript_model (R15) now comes
+        from config.transcription, not an env-var-only helper."""
+        with session_scope(tmp_config) as conn:
+            item_id = _insert_item(conn, media_type="video")
+            _insert_media_file(conn, item_id, file_media_type="video", file_path="clip.mp4")
+
+        fake_transcript = TranscriptionResult(
+            text="someone talking about pasta",
+            segments=[
+                TranscriptSegment(start=0.0, end=1.5, text="someone talking"),
+                TranscriptSegment(start=1.5, end=3.0, text="about pasta"),
+            ],
+        )
+
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch.object(pipeline.keyframes, "extract_keyframes", return_value=[]),
+            patch.object(
+                pipeline.transcription, "transcribe", return_value=fake_transcript
+            ),
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock, return_value=[0.1]),
+            patch.object(pipeline.embedding_store, "upsert_item"),
+        ):
+            await pipeline.process_item(item_id, config=tmp_config)
+
+        item = _get_item(tmp_config, item_id)
+        media_file = item.media_files[0]
+        assert media_file.transcript == "someone talking about pasta"
+
+        with session_scope(tmp_config) as conn:
+            rows = conn.execute(
+                "SELECT sequence_index, start_seconds, end_seconds, text "
+                "FROM transcript_segments WHERE media_file_id = ? ORDER BY sequence_index",
+                (media_file.id,),
+            ).fetchall()
+            model_row = conn.execute(
+                "SELECT transcript_model FROM media_files WHERE id = ?", (media_file.id,)
+            ).fetchone()
+
+        assert [dict(r) for r in rows] == [
+            {"sequence_index": 0, "start_seconds": 0.0, "end_seconds": 1.5, "text": "someone talking"},
+            {"sequence_index": 1, "start_seconds": 1.5, "end_seconds": 3.0, "text": "about pasta"},
+        ]
+        assert model_row["transcript_model"] == tmp_config.transcription.model_size
+
+    @pytest.mark.anyio
+    async def test_noise_filtered_transcript_does_not_persist_its_segments(
+        self, tmp_config: Config
+    ) -> None:
+        """A hallucinated transcript (is_noise() in ai/transcription.py)
+        already comes back with text="" but non-empty segments, by design,
+        so debugging tools can see what Whisper actually said. That must
+        not leak into transcript_segments — a future WebVTT <track> built
+        from those rows would render the hallucination as a real caption
+        over what is, per the noise filter, a silent video."""
+        with session_scope(tmp_config) as conn:
+            item_id = _insert_item(conn, media_type="video")
+            _insert_media_file(conn, item_id, file_media_type="video", file_path="clip.mp4")
+
+        noise_transcript = TranscriptionResult(
+            text="",
+            segments=[TranscriptSegment(start=0.0, end=1.0, text="Thanks for watching!")],
+        )
+
+        with (
+            patch("gramvault.ai.ollama_client.ensure_running", new_callable=AsyncMock),
+            patch("gramvault.ai.ollama_client.ensure_model_pulled", new_callable=AsyncMock),
+            patch.object(pipeline.keyframes, "extract_keyframes", return_value=[]),
+            patch.object(
+                pipeline.transcription, "transcribe", return_value=noise_transcript
+            ),
+            patch("gramvault.ai.ollama_client.embed", new_callable=AsyncMock, return_value=[0.1]),
+            patch.object(pipeline.embedding_store, "upsert_item"),
+        ):
+            await pipeline.process_item(item_id, config=tmp_config)
+
+        item = _get_item(tmp_config, item_id)
+        media_file = item.media_files[0]
+        assert media_file.transcript == ""
+
+        with session_scope(tmp_config) as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) AS c FROM transcript_segments WHERE media_file_id = ?",
+                (media_file.id,),
+            ).fetchone()["c"]
+        assert count == 0
 
     @pytest.mark.anyio
     async def test_video_with_no_frames_yields_empty_caption(

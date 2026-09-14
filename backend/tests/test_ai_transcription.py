@@ -8,13 +8,18 @@ directly rather than through a mocked `WhisperModel`.
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
+from gramvault.ai import transcription
 from gramvault.ai.transcription import (
     MIN_USEFUL_TRANSCRIPT_CHARS,
     is_noise,
     language_hint,
 )
+from gramvault.config import Config
 
 
 @pytest.mark.parametrize(
@@ -111,3 +116,25 @@ def test_is_noise_boundary_is_inclusive_at_the_floor() -> None:
     MIN_USEFUL_TRANSCRIPT_CHARS characters is kept."""
     assert not is_noise("x" * MIN_USEFUL_TRANSCRIPT_CHARS)
     assert is_noise("x" * (MIN_USEFUL_TRANSCRIPT_CHARS - 1))
+
+
+def test_transcribe_loads_the_model_from_config_not_env_vars(monkeypatch) -> None:
+    """R15: model size/device/compute type used to come from
+    GRAMVAULT_WHISPER_* env vars read directly off os.environ, bypassing
+    the config system entirely. Now config.transcription — and a
+    same-named env var (GRAMVAULT_WHISPER_MODEL_SIZE) must have no effect
+    any more, since it's not the scheme config.py actually applies."""
+    monkeypatch.setenv("GRAMVAULT_WHISPER_MODEL_SIZE", "should-be-ignored")
+    config = Config.model_validate(
+        {"transcription": {"model_size": "small", "device": "cuda", "compute_type": "float16"}}
+    )
+
+    class _FakeModel:
+        def transcribe(self, *_args, **_kwargs):
+            return iter([]), type("Info", (), {"language": None})()
+
+    with patch.object(transcription, "_load_model") as mock_load_model:
+        mock_load_model.return_value = _FakeModel()
+        transcription.transcribe(Path("clip.mp4"), config=config)
+
+    mock_load_model.assert_called_once_with("small", "cuda", "float16")

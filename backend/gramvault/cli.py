@@ -364,7 +364,7 @@ def transcribe_media(
         return
 
     typer.echo(f"Transcribing {len(queue)} video(s) with Whisper "
-               f"'{transcription._whisper_model_size()}'. Safe to interrupt and resume.")
+               f"'{config.transcription.model_size}'. Safe to interrupt and resume.")
 
     library_dir = config.resolved_library_dir
     with_speech = silent = failed = 0
@@ -373,7 +373,9 @@ def transcribe_media(
         if not path.is_absolute():
             path = library_dir / path
         try:
-            result = transcription.transcribe(path, transcription.language_hint(row["caption"]))
+            result = transcription.transcribe(
+                path, transcription.language_hint(row["caption"]), config
+            )
         except Exception as exc:  # noqa: BLE001 — one bad file must not end the run
             failed += 1
             typer.echo(f"[{index}/{len(queue)}] failed {path.name}: {exc}")

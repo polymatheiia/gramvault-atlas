@@ -7,15 +7,19 @@ and staying idempotent across re-runs.
 from __future__ import annotations
 
 import json
+import subprocess
 import zipfile
 from pathlib import Path
 
 import pytest
 
+from gramvault.ai.keyframes import ffmpeg_available
 from gramvault.config import Config
 from gramvault.db.session import session_scope
 from gramvault.ingestion.importer import import_zip
 from gramvault.ingestion.linker import link_local_media
+
+needs_ffmpeg = pytest.mark.skipif(not ffmpeg_available(), reason="ffmpeg/ffprobe not on PATH")
 
 
 def _write_export(tmp_path: Path, entries: list[dict], name: str = "export.zip") -> Path:
@@ -93,6 +97,35 @@ def test_link_media_attaches_video_to_saved_reel(tmp_path: Path, tmp_config: Con
     assert rows[0]["media_type"] == "video"
     assert rows[0]["file_path"].startswith("media/")
     assert (tmp_config.resolved_library_dir / rows[0]["file_path"]).exists()
+
+
+@needs_ffmpeg
+def test_link_media_populates_dimensions_via_ffprobe(
+    tmp_path: Path, tmp_config: Config
+) -> None:
+    """R11: linker.py runs the same mediainfo.probe() call importer.py
+    does — check its INSERT wires width/height through correctly too."""
+    zip_path = _write_export(
+        tmp_path, [_saved_entry("https://www.instagram.com/reel/REELdims01/")]
+    )
+    import_zip(zip_path, tmp_config)
+
+    video_path = tmp_path / "real.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "testsrc=duration=1:size=48x32:rate=10", str(video_path)],
+        capture_output=True,
+        check=True,
+    )
+    source = _downloads(
+        tmp_path, {"2024-01-02_03-04-05_UTC_REELdims01.mp4": video_path.read_bytes()}
+    )
+
+    report = link_local_media(source, tmp_config)
+    assert report.files_linked == 1
+
+    rows = _media_rows(tmp_config, "REELdims01")
+    assert (rows[0]["width"], rows[0]["height"]) == (48, 32)
+    assert rows[0]["duration_seconds"] is not None
 
 
 def test_link_media_prefers_video_over_its_thumbnail(

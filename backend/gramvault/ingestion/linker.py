@@ -41,6 +41,7 @@ from pathlib import Path
 
 from gramvault.config import Config, get_config
 from gramvault.db.session import session_scope
+from gramvault.ingestion import mediainfo
 from gramvault.ingestion.organizer import organize_local_file
 from gramvault.models.schemas import FileMediaType, MediaType
 
@@ -259,11 +260,15 @@ def link_local_media(
                 if already is not None:
                     continue
 
+                # R11: best-effort width/height/duration_seconds (None on
+                # failure/missing ffprobe) — see importer.py's identical call.
+                dims = mediainfo.probe(library_dir / organized.file_path)
                 conn.execute(
                     """
                     INSERT INTO media_files
-                        (item_id, file_path, media_type, sequence_index, checksum)
-                    VALUES (?, ?, ?, ?, ?)
+                        (item_id, file_path, media_type, sequence_index, checksum,
+                         width, height, duration_seconds)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item_id,
@@ -271,6 +276,9 @@ def link_local_media(
                         file_type.value,
                         sequence_index,
                         organized.checksum,
+                        dims.width if dims else None,
+                        dims.height if dims else None,
+                        dims.duration_seconds if dims else None,
                     ),
                 )
                 linked_here += 1

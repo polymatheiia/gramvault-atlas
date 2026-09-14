@@ -95,6 +95,14 @@ video:
   keyframe_interval_seconds: 5
   max_keyframes: 6
 
+# transcription:
+#   # faster-whisper settings. "turbo" (the default) handles non-English
+#   # audio far better than the smaller models, at ~2x the CPU wall clock —
+#   # set model_size: small to trade that back for an English-heavy library.
+#   model_size: turbo
+#   device: cpu           # or "cuda" with a GPU build of ctranslate2
+#   compute_type: int8    # int8 / int8_float16 / float16 / float32
+
 server:
   host: "127.0.0.1"
   port: 8000

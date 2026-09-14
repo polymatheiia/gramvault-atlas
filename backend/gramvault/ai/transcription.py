@@ -13,19 +13,15 @@ import happens lazily inside `_load_model()` so that:
   - tests can monkeypatch `_load_model` directly instead of needing a real
     model file on disk.
 
-Model size/device/compute type aren't in `config.yaml` (that file is owned
-by Agent A1's scaffold and lists only the Ollama model names) — they're
-read from environment variables with sensible CPU-friendly defaults so
-they're still configurable without hardcoding, without needing to touch
-`gramvault/config.py`:
-    GRAMVAULT_WHISPER_MODEL_SIZE   (default: "base")
-    GRAMVAULT_WHISPER_DEVICE       (default: "cpu")
-    GRAMVAULT_WHISPER_COMPUTE_TYPE (default: "int8")
+Model size/device/compute type come from `config.transcription` (audit
+finding R15 — these used to be read directly off GRAMVAULT_WHISPER_*
+environment variables, bypassing the config system's "nothing reads
+os.environ directly" rule; still overridable per-field via the standard
+GRAMVAULT_TRANSCRIPTION__<FIELD> scheme, just through Config now).
 """
 
 from __future__ import annotations
 
-import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -33,17 +29,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-# "turbo" (large-v3-turbo) rather than a smaller model: on non-English
-# audio the small models don't degrade gracefully, they produce confident
-# non-words — measured here, Ukrainian "толерантність ... ГБТ спільноти"
-# came back from `small` as "певерантність ... вибетестлю ноти". Wrong text
-# is worse than no text once it's embedded, and it's indistinguishable from
-# real text downstream. Turbo costs roughly 2x the wall clock on CPU; set
-# GRAMVAULT_WHISPER_MODEL_SIZE=small to trade that back if the library is
-# predominantly English.
-DEFAULT_MODEL_SIZE = "turbo"
-DEFAULT_DEVICE = "cpu"
-DEFAULT_COMPUTE_TYPE = "int8"
+from gramvault.config import Config, get_config
 
 # Letters unique (or near-unique) to a language among the Latin-script
 # languages that actually show up in saved Instagram content. Only used to
@@ -119,18 +105,6 @@ def language_hint(text: str | None) -> str | None:
     if len(words & _ENGLISH_STOPWORDS) >= 2:
         return "en"
     return None
-
-
-def _whisper_model_size() -> str:
-    return os.environ.get("GRAMVAULT_WHISPER_MODEL_SIZE", DEFAULT_MODEL_SIZE)
-
-
-def _whisper_device() -> str:
-    return os.environ.get("GRAMVAULT_WHISPER_DEVICE", DEFAULT_DEVICE)
-
-
-def _whisper_compute_type() -> str:
-    return os.environ.get("GRAMVAULT_WHISPER_COMPUTE_TYPE", DEFAULT_COMPUTE_TYPE)
 
 
 @dataclass
@@ -228,7 +202,9 @@ def _load_model(model_size: str, device: str, compute_type: str) -> Any:
     return WhisperModel(model_size, device=device, compute_type=compute_type)
 
 
-def transcribe(media_path: Path, language: str | None = None) -> TranscriptionResult:
+def transcribe(
+    media_path: Path, language: str | None = None, config: Config | None = None
+) -> TranscriptionResult:
     """Transcribe the audio track of `media_path` (video or audio file).
 
     Returns an empty-text `TranscriptionResult` (not an error) if the file
@@ -243,7 +219,12 @@ def transcribe(media_path: Path, language: str | None = None) -> TranscriptionRe
     post's caption).
     """
     media_path = Path(media_path)
-    model = _load_model(_whisper_model_size(), _whisper_device(), _whisper_compute_type())
+    config = config or get_config()
+    model = _load_model(
+        config.transcription.model_size,
+        config.transcription.device,
+        config.transcription.compute_type,
+    )
 
     try:
         segments_iter, info = model.transcribe(

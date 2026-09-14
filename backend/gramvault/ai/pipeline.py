@@ -151,6 +151,27 @@ def _update_media_file(
         )
 
 
+def _record_transcript_segments(
+    conn: sqlite3.Connection,
+    media_file_id: int,
+    segments: list[transcription.TranscriptSegment],
+) -> None:
+    """Replace `media_file_id`'s timed segments (migration 008, R11) —
+    delete-then-insert, same shape as `chat.fts.reindex`, so a re-run
+    (e.g. `retry_discarded`-style re-transcription) doesn't duplicate rows."""
+    conn.execute("DELETE FROM transcript_segments WHERE media_file_id = ?", (media_file_id,))
+    if segments:
+        conn.executemany(
+            "INSERT INTO transcript_segments "
+            "(media_file_id, sequence_index, start_seconds, end_seconds, text) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [
+                (media_file_id, index, segment.start, segment.end, segment.text)
+                for index, segment in enumerate(segments)
+            ],
+        )
+
+
 def _record_ocr(
     conn: sqlite3.Connection, media_file_id: int, text: str | None, model: str
 ) -> None:
@@ -223,11 +244,13 @@ async def _caption_video(config: Config, media_file: MediaFile) -> str:
 
 async def _transcribe_video(
     config: Config, media_file: MediaFile, caption: str | None = None
-) -> str:
+) -> transcription.TranscriptionResult:
+    """Returns the full result, not just `.text` — R11: the timed segments
+    faster-whisper already produces are worth keeping (a caption deep-link,
+    a WebVTT track), not just the flattened text."""
     path = _resolve_media_path(config, media_file.file_path)
     hint = transcription.language_hint(caption)
-    result = await asyncio.to_thread(transcription.transcribe, path, hint)
-    return result.text
+    return await asyncio.to_thread(transcription.transcribe, path, hint, config)
 
 
 # --- on-screen text (OCR) ----------------------------------------------------
@@ -410,15 +433,22 @@ async def process_item(
                 and media_file.media_type == "video"
                 and media_file.transcript is None
             ):
-                transcript = await _transcribe_video(config, media_file, item.caption)
+                result = await _transcribe_video(config, media_file, item.caption)
                 with session_scope(config) as conn:
                     _update_media_file(
                         conn,
                         media_file.id,
-                        transcript=transcript,
-                        transcript_model=transcription._whisper_model_size(),
+                        transcript=result.text,
+                        transcript_model=config.transcription.model_size,
                     )
-                media_file.transcript = transcript
+                    # transcribe() keeps `result.segments` even when `text`
+                    # came back "" (is_noise() filtered a hallucination,
+                    # e.g. "Thanks for watching!" over a silent reel) — that
+                    # discard decision must not be silently reversed here by
+                    # storing the very segments it filtered out.
+                    if result.text:
+                        _record_transcript_segments(conn, media_file.id, result.segments)
+                media_file.transcript = result.text
 
         if steps.embed:
             await _embed_and_upsert(config, item)
