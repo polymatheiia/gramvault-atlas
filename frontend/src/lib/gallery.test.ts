@@ -22,6 +22,10 @@ describe('filterSearch', () => {
   it('carries the search (semantic query) key too', () => {
     expect(filterSearch(new URLSearchParams('search=pasta'))).toBe('?search=pasta')
   })
+
+  it('carries the search mode alongside search', () => {
+    expect(filterSearch(new URLSearchParams('search=pasta&mode=keyword'))).toBe('?search=pasta&mode=keyword')
+  })
 })
 
 describe('fetchSiblingIds', () => {
@@ -41,22 +45,38 @@ describe('fetchSiblingIds', () => {
     )
   })
 
-  it('under an active search, filters results by category client-side', async () => {
+  it('forwards a real category as a server-side facet for semantic search (R13)', async () => {
     vi.mocked(api.get).mockResolvedValue({
       query: 'pasta',
-      total: 2,
-      results: [
-        { item: { id: 1, category: 'recipes' }, score: 0.9 },
-        { item: { id: 2, category: 'travel' }, score: 0.8 },
-      ],
+      total: 1,
+      results: [{ item: { id: 1, category: 'recipes' }, score: 0.9 }],
     })
 
     const ids = await fetchSiblingIds(new URLSearchParams('search=pasta&category=recipes'))
 
+    expect(api.get).toHaveBeenCalledWith(
+      '/api/chat/search',
+      expect.objectContaining({ category: 'recipes' }),
+      undefined,
+    )
     expect(ids).toEqual([1])
   })
 
-  it('under an active search, an uncategorized filter keeps only null-category results', async () => {
+  it('forwards author/media_type/tag/date facets to semantic search too (R13)', async () => {
+    vi.mocked(api.get).mockResolvedValue({ results: [], query: 'pasta', total: 0 })
+
+    await fetchSiblingIds(
+      new URLSearchParams('search=pasta&author=alice&media_type=reel&tag=travel&date_from=2024-01-01'),
+    )
+
+    expect(api.get).toHaveBeenCalledWith(
+      '/api/chat/search',
+      expect.objectContaining({ author: 'alice', media_type: 'reel', tag: 'travel', date_from: '2024-01-01' }),
+      undefined,
+    )
+  })
+
+  it('under an active search, an uncategorized filter is NOT sent as a facet (SearchFilters has no sentinel for it) and is applied client-side instead', async () => {
     vi.mocked(api.get).mockResolvedValue({
       query: 'pasta',
       total: 2,
@@ -70,7 +90,22 @@ describe('fetchSiblingIds', () => {
       new URLSearchParams('search=pasta&category=__uncategorized__'),
     )
 
+    const [, calledParams] = vi.mocked(api.get).mock.calls[0] as [string, Record<string, unknown>]
+    expect(calledParams.category).toBeUndefined()
     expect(ids).toEqual([1])
+  })
+
+  it('under keyword mode, an active search goes to item-ids with q + facets instead of chat/search', async () => {
+    vi.mocked(api.get).mockResolvedValue({ ids: [5], total: 1 })
+
+    const ids = await fetchSiblingIds(new URLSearchParams('search=pasta&mode=keyword&author=alice'))
+
+    expect(api.get).toHaveBeenCalledWith(
+      '/api/library/item-ids',
+      { author: 'alice', q: 'pasta' },
+      undefined,
+    )
+    expect(ids).toEqual([5])
   })
 
   it('without a search, calls the plain item-ids endpoint with the browse filters', async () => {

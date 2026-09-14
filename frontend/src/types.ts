@@ -442,6 +442,10 @@ export interface SemanticSearchResult {
 export interface SemanticSearchResponse {
   query: string
   results: SemanticSearchResult[]
+  /** Matching candidates found within the search window before the final
+   * top_k truncation — not a full-library count; can exceed results.length
+   * even with no facets applied. */
+  total: number
 }
 
 export interface ExportRequest {
