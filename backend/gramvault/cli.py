@@ -691,6 +691,66 @@ def digest_command(
         typer.echo(markdown)
 
 
+@app.command(name="backup")
+def backup_command(
+    dest_dir: Path = typer.Argument(..., help="Directory to write the backup archive into"),
+) -> None:
+    """Write a gramvault-backup-<timestamp>.tar.gz: the database (a
+    consistent snapshot, safe to take while the server is running),
+    the Chroma vector store, and config.yaml. secrets.yaml (API keys,
+    the auth token) is never included — back it up separately if you
+    want it."""
+    from gramvault.config import get_config_path
+    from gramvault.db.backup import BackupError, create_backup
+
+    config = get_config()
+    try:
+        archive = create_backup(config, dest_dir, config_path=get_config_path())
+    except BackupError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wrote {archive}")
+    typer.echo(
+        "secrets.yaml was NOT included (provider API keys, the auth token) — "
+        "back it up separately if you need it."
+    )
+
+
+@app.command(name="restore")
+def restore_command(
+    archive_path: Path = typer.Argument(..., help="Path to a gramvault-backup-*.tar.gz"),
+    yes: bool = typer.Option(
+        False, "--yes", help="Skip the confirmation prompt (for scripted use)"
+    ),
+) -> None:
+    """Restore the database and Chroma vector store from a backup archive.
+    Overwrites the current database and vector store — config.yaml and
+    secrets.yaml are never touched."""
+    from gramvault.db.backup import BackupError, read_manifest, restore_backup
+
+    config = get_config()
+    try:
+        manifest = read_manifest(archive_path)
+    except BackupError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(
+        f"Backup from {manifest.created_at} (gramvault {manifest.gramvault_version}, "
+        f"schema version {manifest.schema_version})."
+    )
+    typer.echo(f"This will OVERWRITE {config.resolved_db_path} and {config.resolved_chroma_dir}.")
+    if not yes and not typer.confirm("Continue?"):
+        raise typer.Exit(code=1)
+
+    try:
+        restore_backup(config, archive_path)
+    except BackupError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    typer.echo("Restored. Restart the server if it's currently running.")
+
+
 @app.command(name="migrate")
 def migrate_command(
     status_only: bool = typer.Option(
