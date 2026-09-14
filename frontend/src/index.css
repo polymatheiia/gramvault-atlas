@@ -16,6 +16,19 @@
     @apply bg-accent/40 text-white;
   }
 
+  /* Every interactive element gets a visible keyboard-focus ring, even
+   * ones (plain <a>/<button>/icon-only controls) that don't already set
+   * one via .input's own focus:ring (audit finding UX-11 — icon-only
+   * buttons had no visible focus state at all). */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    @apply outline outline-2 outline-offset-2 outline-accent;
+  }
+
   ::-webkit-scrollbar {
     width: 10px;
     height: 10px;

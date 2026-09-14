@@ -290,20 +290,24 @@ export function ItemDetail() {
         <div className="flex items-center gap-2 text-sm">
           {position && <span className="text-slate-500">{position}</span>}
           {prevId != null ? (
-            <Link to={`/items/${prevId}${ctx}`} className="btn-secondary" title="Previous (←)">
+            <Link to={`/items/${prevId}${ctx}`} className="btn-secondary" title="Previous (←)" aria-label="Previous item">
               ←
             </Link>
           ) : (
-            <span className="btn-secondary opacity-40">←</span>
+            <span className="btn-secondary opacity-40" aria-hidden="true">
+              ←
+            </span>
           )}
           {nextId != null ? (
-            <Link to={`/items/${nextId}${ctx}`} className="btn-secondary" title="Next (→)">
+            <Link to={`/items/${nextId}${ctx}`} className="btn-secondary" title="Next (→)" aria-label="Next item">
               →
             </Link>
           ) : (
-            <span className="btn-secondary opacity-40">→</span>
+            <span className="btn-secondary opacity-40" aria-hidden="true">
+              →
+            </span>
           )}
-          <Link to={`/feed${ctx}`} className="btn-secondary" title="Open the full-screen feed">
+          <Link to={`/feed${ctx}`} className="btn-secondary" title="Open the full-screen feed" aria-label="Open full-screen feed">
             ▶ Feed
           </Link>
           <button
