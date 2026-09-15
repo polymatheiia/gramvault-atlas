@@ -23,6 +23,8 @@ It is a fork of [**GramVault** by Aleksander Islami](https://github.com/aleksand
 - [Pulling your saved posts](#pulling-your-saved-posts)
 - [Architecture](#architecture)
 - [How GramVault Atlas differs from GramVault](#how-gramvault-atlas-differs-from-gramvault)
+- [Security](#security)
+- [Backups](#backups)
 - [Privacy](#privacy)
 - [Credits & prior work](#credits--prior-work)
 - [Contributing](#contributing)
@@ -34,11 +36,11 @@ It is a fork of [**GramVault** by Aleksander Islami](https://github.com/aleksand
 
 | | |
 |---|---|
-| **Import** | Drag-and-drop (or `gramvault import <zip>`) an Instagram "Download Your Information" JSON export. Own posts, saved posts, photos, videos and reels are parsed, deduplicated by content hash, and organised into a local library. Saved posts from *other* accounts come in link-only (Instagram doesn't put their media in your export) — `gramvault link-media <dir>` attaches media you download yourself. |
+| **Import** | Drag-and-drop (or `gramvault import <zip>`) an Instagram "Download Your Information" JSON export. Own posts, saved posts, photos, videos and reels are parsed, deduplicated by content hash, and organised into a local library. Saved posts from *other* accounts come in link-only (Instagram doesn't put their media in your export) — link media you've downloaded yourself from the Import page, or `gramvault link-media <dir>` from the CLI. |
 | **Pull** *(opt-in)* | Skip the wait for an export: walk your **saved feed** directly with a logged-in session and pull anything new. Cookies-only login, off by default, rate-limited on purpose. See [Pulling your saved posts](#pulling-your-saved-posts). |
 | **Enrich** | A resumable background pipeline: caption images and video keyframes with a vision model, read on-screen text off carousel slides and silent reels (OCR), transcribe audio with `faster-whisper`, and embed everything into a local ChromaDB vector store. Four independent passes with live "N need this" counts and a failures list. |
 | **Categorize** | A two-pass classifier — a deterministic multilingual keyword vote, then an optional LLM pass — sorts uncategorised items into 14 categories (books, psychology, recipes, workouts, …). Low-confidence guesses land in a **review queue** you clear with one click. Manual labels are never overwritten. |
-| **Gallery & search** | Browse the whole library in a filterable grid (type, author, tag, category, date range). Semantic search over captions/transcripts/vision/OCR, plus an FTS5 keyword index with prefix and accent-folded matching. |
+| **Gallery & search** | Browse the whole library in a filterable grid (type, author, tag, category, date range, favourites), with selection + bulk actions (categorize, digest, export). Toggle between semantic search (captions/transcripts/vision/OCR) and an FTS5 keyword index with prefix and accent-folded matching. |
 | **Feed** | A full-screen, scroll-snap **reels-style feed** — one item per screen, videos autoplay, ↑/↓ to move. Honours the gallery filters, so "every reel in *books*" is a swipeable stack. |
 | **Chat with citations** | Ask natural-language questions ("what recipes did I save last spring?") and get streamed answers from a local (or hosted) LLM, grounded in hybrid retrieval over your library, with inline `[[item:<id>]]` citation chips linking back to the source. |
 | **Digests** | Map-reduce a selection of items through a template into one clean Markdown document — `book-titles`, `advice-digest`, `link-list`, `media-titles`, `linked-findings` (or your own). Deduped, themed, cited, reproducible (the exact item set is snapshotted). |
@@ -90,11 +92,19 @@ The script creates a `.venv`, installs the backend editable, builds the frontend
 gramvault serve
 ```
 
-Visit **http://localhost:8000**, then either open **Import** and upload your export ZIP, or try the bundled fixture first:
+On first run, `gramvault serve` generates a random auth token, saves it to `secrets.yaml`, and prints it once:
+
+```
+Generated an API token (also saved to secrets.yaml): <random-token>
+```
+
+Visit **http://localhost:8000**, paste that token into the login prompt, then either open **Import** and upload your export ZIP, or try the bundled fixture first:
 
 ```bash
 gramvault import tests/fixtures/sample_export.zip
 ```
+
+Lost the token? `gramvault token show` prints it again (`gramvault token rotate` issues a new one). See [Security](#security) for what the token protects and when it's safe to skip.
 
 ### Optional: pull your saved posts
 
@@ -106,12 +116,13 @@ A multi-stage `Dockerfile` (builds the SPA, then a slim Python runtime with ffmp
 
 ```bash
 cp config.example.yaml config.yaml            # edit paths / models / server.host
-touch secrets.yaml                            # lets Settings → Models save API keys
+touch secrets.yaml                            # gramvault writes the auto-generated auth token here on first start
 printf 'GRAMVAULT_UID=%s\nGRAMVAULT_GID=%s\n' "$(id -u)" "$(id -g)" > .env
 docker compose up -d --build
+docker compose logs | grep "Generated an API token"   # grab the token it printed on first boot
 ```
 
-The compose file uses **host networking**, so the server binds whatever `server.host` in `config.yaml` says — `127.0.0.1` for local-only, or a Tailscale IP (`100.x.y.z`) to reach it from other devices on your tailnet. **Never bind a non-local address without setting `server.auth_token`.** Ollama is expected to run natively on the host; uncomment the `ollama` service to containerise it.
+The compose file uses **host networking**, so the server binds whatever `server.host` in `config.yaml` says — `127.0.0.1` for local-only, or a Tailscale IP (`100.x.y.z`) to reach it from other devices on your tailnet. Binding a non-loopback address with no `auth.token` set and without `--insecure` is refused at startup — see [Security](#security). Ollama is expected to run natively on the host; uncomment the `ollama` service to containerise it.
 
 `config.yaml`, `secrets.yaml`, `data/` (SQLite + Chroma + keyframes + the cached whisper model), `library/` (imported media) and — if you uncomment it — your Obsidian vault are bind-mounted, so all state lives on the host. The bridge-network alternative and a systemd unit are in [`docs/DESIGN.md`](docs/DESIGN.md) §H.
 
@@ -235,6 +246,38 @@ Upstream [GramVault](https://github.com/aleksanderislami03-cell/gramvault) is a 
 - **Infra** — a real migration mechanism, WAL + a jobs table with DB-level single-flight, Docker packaging, OpenAPI→TypeScript type generation.
 
 The full design rationale, section by section, is in [`docs/DESIGN.md`](docs/DESIGN.md).
+
+### Since the post-publish audit
+
+A full security/reliability/UX audit ran after the initial release; every finding it raised has since been fixed or deliberately deferred (see [`SECURITY.md`](SECURITY.md) for the deferred/out-of-scope ones). Notably:
+
+- **Auth on by default** — a token is generated and required the first time you run `gramvault serve`; binding a non-loopback address with no token now refuses to start.
+- **Cross-site request rejection + Host validation** — the API rejects cross-site requests and unrecognised `Host` headers, closing CSRF and DNS-rebinding against the local server.
+- **Media served defensively** — imported files are allowlisted by extension and content sniffed at import time; anything served under `/media` that isn't an image/video carries `Content-Disposition: attachment` and a locked-down CSP.
+- **Vault-path and export hardening** — exports can no longer write or delete outside the configured Obsidian vault.
+- **Favourites & notes**, **WebVTT captions** generated from the existing transcript pipeline, **link-media** available from the Import page (not just the CLI), and `gramvault backup`/`restore` (see [Backups](#backups)).
+
+## Security
+
+GramVault Atlas is meant to run on a machine or home server you control, but it's a real web app with a real attack surface once anything can reach its port — including your own browser, via a malicious page. Defaults are chosen so a fresh install is safe without you doing anything:
+
+- **Auth token, generated automatically.** `gramvault serve` writes one to `secrets.yaml` and prints it once on first run (`gramvault token show|rotate` afterwards). Every `/api/*` route except `/api/health` requires it once it's set. You can opt out with `auth.disabled: true` in `config.yaml`, but binding anything other than `localhost`/`127.0.0.1`/`::1` without a token requires `--insecure` and logs a warning.
+- **Cross-site protection.** A middleware rejects requests with `Sec-Fetch-Site: cross-site`, an unrecognised `Origin`, or a non-GET `/api/*` request missing the SPA's custom client header — so a page on another site can't drive the API even with "simple" no-preflight requests.
+- **Host allowlist** (`TrustedHostMiddleware`) closes DNS-rebinding reads against the local server.
+- **Media allowlist.** Imported files are restricted to known image/video extensions and sniffed by magic bytes at import time; anything else is skipped with a warning. Files served under `/media` get `X-Content-Type-Options: nosniff` and a sandboxing CSP; non-media types are forced to download rather than render.
+- **Vault-path containment.** The Obsidian export subfolder is validated as a relative path inside the configured vault — no `..`, no absolute paths.
+- **Secrets are write-only.** Provider API keys and the auth token live in `secrets.yaml` (`chmod 600`, gitignored) and are never echoed back by the API.
+
+Report a vulnerability privately via GitHub's security advisory flow — see [`SECURITY.md`](SECURITY.md) for scope and the list of hardening items that were deliberately deferred (with reasons).
+
+## Backups
+
+```bash
+gramvault backup <dest-dir>              # writes gramvault-backup-<timestamp>.tar.gz there
+gramvault restore <archive> [--yes]      # restores from a backup made with the command above
+```
+
+A backup archive is a consistent SQLite snapshot (safe to take while the server is running), the Chroma vector store, and `config.yaml`. `secrets.yaml` (API keys, the auth token) is **not** included — back it up separately if you want it, and treat it like a password if you do. The `library/` media tree isn't included either (it's typically the largest and least likely to change data — back it up with your regular file backups). `restore` overwrites the current database and vector store; it never touches `config.yaml`/`secrets.yaml` on disk.
 
 ### Staying in sync with upstream
 

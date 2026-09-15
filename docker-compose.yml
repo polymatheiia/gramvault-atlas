@@ -9,7 +9,8 @@
 #   directly — the Tailscale-IP bind then happens in-app and survives Docker
 #   starting before tailscale0 has an address (see §H2 / W2). Set
 #   `server.host` in config.yaml to 127.0.0.1 (local only) or your Tailscale
-#   IP (100.x.y.z). Never 0.0.0.0 unless `server.auth_token` is also set.
+#   IP (100.x.y.z). Binding anything non-loopback with no `auth.token` set
+#   is refused at startup unless `--insecure` is passed.
 #   If you would rather use a bridge network, drop `network_mode: host`, add
 #   `ports: ["127.0.0.1:8000:8000"]`, set GRAMVAULT_SERVER__HOST=0.0.0.0, and
 #   point GRAMVAULT_OLLAMA__HOST at host.docker.internal (+ extra_hosts).

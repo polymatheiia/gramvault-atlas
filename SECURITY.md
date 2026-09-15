@@ -33,9 +33,26 @@ except to a localhost Ollama. The most security-relevant surfaces:
   persisted anywhere but the session file.
 - **Secrets handling** — `secrets.yaml` (`chmod 600`, gitignored); the
   Models API is write-only and must never echo a key back.
-- **The bearer-token auth middleware** (`server.auth_token`) — bypasses of
-  it, or of the localhost-only bind, are in scope. "Another app on the
-  same machine can reach the port" is inherent to a localhost web app and
-  not a vulnerability by itself.
+- **The bearer-token auth middleware** (`auth.token`, auto-generated on
+  first run) and the cross-site request / Host-allowlist protections —
+  bypasses of any of these, or of the localhost-only bind, are in scope.
+  "Another app on the same machine can reach the port" is inherent to a
+  localhost web app and not a vulnerability by itself.
+
+## Deferred / out of scope
+
+A 2026-09 post-publish audit's findings have all been fixed except the
+following, deliberately deferred:
+
+- A DB-backed keyword table for the classifier (needs verification against
+  a live LLM eval harness before it can safely replace the current one).
+- Configurable Obsidian note templates (risk of breaking the exporter's
+  managed-region round-trip logic without full verification).
+- An in-app scheduled-pull run summary — the documented cron/systemd-timer
+  path already covers scheduling.
+- A browser-extension hand-off to replace server-side Firefox cookie
+  reading for the Instagram pull — a separate project, not a code change
+  in this repo.
+- Signed releases / pipx packaging — open-ended release-process work.
 
 Reports in those areas are especially welcome.
