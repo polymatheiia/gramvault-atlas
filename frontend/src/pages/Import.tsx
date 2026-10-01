@@ -37,6 +37,14 @@ export function Import() {
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  // Stops the import poll loop when the page goes away.
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const [enrichRunning, setEnrichRunning] = useState(false)
   const [progress, setProgress] = useState<EnrichmentProgress | null>(null)
@@ -64,8 +72,8 @@ export function Import() {
     try {
       const job = await uploadFile<ImportJob>('/api/import/upload', file, 'file', setUploadPct)
       setCurrentJob(job)
-      // Import currently runs synchronously (see routes_import.py), so `job`
-      // is already in its final state — poll anyway in case that changes.
+      // The import runs in the background (see routes_import.py); poll
+      // the job until it finishes.
       if (job.status === 'pending' || job.status === 'running') {
         void pollJob(job.id ?? undefined)
       }
@@ -79,8 +87,11 @@ export function Import() {
 
   async function pollJob(jobId: number | undefined) {
     if (jobId === undefined) return
-    for (let i = 0; i < 60; i++) {
+    // No iteration cap: a media-bearing export can take many minutes, and
+    // the old 90 s cap left the page showing a stale "running" job.
+    while (mountedRef.current) {
       await new Promise((r) => setTimeout(r, 1500))
+      if (!mountedRef.current) return
       try {
         const job = await api.get<ImportJob>(`/api/import/jobs/${jobId}`)
         setCurrentJob(job)
@@ -89,7 +100,7 @@ export function Import() {
         break
       }
     }
-    refreshJobs()
+    if (mountedRef.current) refreshJobs()
   }
 
   function onDrop(e: DragEvent) {

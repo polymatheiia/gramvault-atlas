@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { api, captionsUrl, mediaUrl } from '../api/client'
+import { api, mediaUrl } from '../api/client'
+import { CaptionTrack } from '../components/CaptionTrack'
 import { filterSearch, useSiblingIds } from '../lib/gallery'
 import type { Item, ItemListResponse, MediaFile } from '../types'
 
@@ -60,7 +61,7 @@ function FeedMedia({ item, active }: { item: Item; active: boolean }) {
           onClick={() => setPaused((p) => !p)}
         >
           {first.id != null && first.transcript && (
-            <track kind="captions" srcLang="auto" label="Transcript" src={captionsUrl(first.id)} default />
+            <CaptionTrack mediaFileId={first.id} />
           )}
         </video>
         {paused && (
@@ -90,7 +91,7 @@ function FeedMedia({ item, active }: { item: Item; active: boolean }) {
             {f.media_type === 'video' ? (
               <video src={mediaUrl(f.file_path)} className="max-h-full max-w-full" controls playsInline>
                 {f.id != null && f.transcript && (
-                  <track kind="captions" srcLang="auto" label="Transcript" src={captionsUrl(f.id)} default />
+                  <CaptionTrack mediaFileId={f.id} />
                 )}
               </video>
             ) : (

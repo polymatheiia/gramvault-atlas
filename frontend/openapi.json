@@ -3438,7 +3438,7 @@
     },
     "/api/chat/search": {
       "get": {
-        "description": "Semantic search over the library (captions/transcripts/vision\ncaptions), independent of the chat flow \u2014 used for a \"search bar\"\nstyle experience in the frontend. No LLM call \u2014 embedding + vector\nsearch (merged with a keyword pass), same as chat retrieval but\nwithout the chat completion step.\n\n`category`/`author`/`media_type`/`date_from`/`date_to` narrow the\ncandidates to the same facets the gallery filters on (R13 \u2014 this used\nto ignore every gallery filter, leaving only a client-side category\nfilter applied after the fact over whatever the top-k happened to be).",
+        "description": "Semantic search over the library (captions/transcripts/vision\ncaptions), independent of the chat flow \u2014 used for a \"search bar\"\nstyle experience in the frontend. No LLM call \u2014 embedding + vector\nsearch (merged with a keyword pass), same as chat retrieval but\nwithout the chat completion step.\n\n`category`/`author`/`media_type`/`date_from`/`date_to`/`tag`/`favourite` narrow the\ncandidates to the same facets the gallery filters on (R13 \u2014 this used\nto ignore every gallery filter, leaving only a client-side category\nfilter applied after the fact over whatever the top-k happened to be).",
         "operationId": "semantic_search_api_chat_search_get",
         "parameters": [
           {
@@ -3550,6 +3550,36 @@
                 }
               ],
               "title": "Date To"
+            }
+          },
+          {
+            "description": "Filter by tag name",
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Filter by tag name",
+              "title": "Tag"
+            }
+          },
+          {
+            "description": "Only favourited items",
+            "in": "query",
+            "name": "favourite",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Only favourited items",
+              "title": "Favourite",
+              "type": "boolean"
             }
           }
         ],
@@ -5877,7 +5907,7 @@
     },
     "/api/library/items/{item_id}/tags": {
       "patch": {
-        "description": "Replace an item's manually-assigned tags.\n\nDecision: only tags of kind='manual' are replaced by this endpoint \u2014\nauto-generated tags (from the AI pipeline) and hashtag tags (parsed\nfrom captions) are left untouched, since a user editing \"their\" tags\nshouldn't accidentally wipe out AI-generated ones. Any name in\n`body.tags` that doesn't already exist as a tag is created as\nkind='manual'; if it already exists under any kind, the existing tag\nrow is simply (re-)linked to this item.",
+        "description": "Replace an item's manually-assigned tags.\n\nDecision: only links the user added (`item_tags.manual = 1`, migration\n010) are replaced by this endpoint \u2014 auto-generated tags (from the AI\npipeline) and hashtag tags (parsed from captions) are left untouched,\nsince a user editing \"their\" tags shouldn't accidentally wipe out\nAI-generated ones. Any name in `body.tags` that doesn't already exist\nas a tag is created as kind='manual'; if it already exists under any\nkind, the existing tag row is linked to this item and that link is\nmarked manual, so it can be removed again later. Item responses report\na manual link's tag with `kind='manual'`.",
         "operationId": "update_item_tags_api_library_items__item_id__tags_patch",
         "parameters": [
           {

@@ -90,15 +90,34 @@ function buildUrl(path: string, params?: Record<string, unknown>): string {
   return url.pathname + url.search
 }
 
+/** Parse a response body as JSON, falling back to the raw text — an error
+ * from something other than the API (a reverse proxy's HTML 413/502 page,
+ * Starlette's plain-text "Invalid host header") isn't JSON. */
+function parseBody(text: string): unknown {
+  if (!text) return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+function apiErrorFrom(status: number, body: unknown): ApiError {
+  if (body && typeof body === 'object' && 'detail' in body) {
+    const detail = (body as { detail: unknown }).detail
+    return new ApiError(status, detail, typeof detail === 'string' ? detail : undefined)
+  }
+  // Non-JSON: show short plain text as-is, never a whole HTML page.
+  const text = typeof body === 'string' ? body.trim() : ''
+  const short = text && text.length <= 200 && !text.startsWith('<') ? `: ${text}` : ''
+  return new ApiError(status, body, `Request failed (${status})${short}`)
+}
+
 async function parseResponse<T>(res: Response): Promise<T> {
   if (res.status === 401) onUnauthorized?.()
   if (res.status === 204) return undefined as T
-  const text = await res.text()
-  const body = text ? JSON.parse(text) : undefined
-  if (!res.ok) {
-    const detail = body && typeof body === 'object' && 'detail' in body ? body.detail : body
-    throw new ApiError(res.status, detail, typeof detail === 'string' ? detail : undefined)
-  }
+  const body = parseBody(await res.text())
+  if (!res.ok) throw apiErrorFrom(res.status, body)
   return body as T
 }
 
@@ -155,14 +174,12 @@ export async function uploadFile<T>(
       }
     }
     xhr.onload = () => {
-      const text = xhr.responseText
-      const body = text ? JSON.parse(text) : undefined
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve(body as T)
-      } else {
-        const detail = body && typeof body === 'object' && 'detail' in body ? body.detail : body
-        reject(new ApiError(xhr.status, detail, typeof detail === 'string' ? detail : undefined))
-      }
+      // A throw in here (it used to be an unguarded JSON.parse of e.g. a
+      // proxy's HTML 413 page) would leave this promise pending forever.
+      const body = parseBody(xhr.responseText)
+      if (xhr.status === 401) onUnauthorized?.()
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as T)
+      else reject(apiErrorFrom(xhr.status, body))
     }
     xhr.onerror = () => reject(new ApiError(0, null, 'Network error'))
     const form = new FormData()
@@ -183,11 +200,24 @@ export function mediaUrl(filePath: string): string {
 }
 
 /** WebVTT captions for a media file, built from Whisper's per-segment
- * timestamps (`GET /api/library/media/{id}/captions.vtt`) — 404s when
- * there's no transcript yet, so callers should treat a failed load as
- * "no captions available" rather than an error. */
-export function captionsUrl(mediaFileId: number): string {
-  return `${API_BASE_URL}/api/library/media/${mediaFileId}/captions.vtt`
+ * timestamps (`GET /api/library/media/{id}/captions.vtt`), as a `blob:` URL
+ * for a `<track>` — or null when there are none (the endpoint 404s with no
+ * transcript yet). Fetched here rather than pointing `<track src>` at the
+ * API, because a track load can't carry the bearer token: with auth on
+ * (the default) it was always rejected with 401. Callers own the URL and
+ * must `URL.revokeObjectURL` it. */
+export async function fetchCaptionsObjectUrl(
+  mediaFileId: number,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const res = await fetch(buildUrl(`/api/library/media/${mediaFileId}/captions.vtt`), {
+    headers: authHeaders(),
+    signal,
+  })
+  if (res.status === 401) onUnauthorized?.()
+  if (!res.ok) return null
+  const vtt = await res.text()
+  return URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }))
 }
 
 export interface ChatStreamDonePayload {
