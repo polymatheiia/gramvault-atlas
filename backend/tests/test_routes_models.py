@@ -220,6 +220,22 @@ class TestPull:
         assert job["status"] == "done"
         assert job["result"]["status"] == "success"
 
+    def test_pull_error_event_fails_the_job(self, models_client) -> None:
+        """A failed pull arrives as an `{"error": ...}` event on a 200
+        stream; it used to finish the job as `done`."""
+        client, _ = models_client
+
+        async def fake_pull(model, config):  # noqa: ARG001
+            yield {"status": "pulling manifest"}
+            yield {"error": "pull model manifest: file does not exist"}
+
+        with patch("gramvault.api.routes_models.ollama_client.pull_model", side_effect=fake_pull):
+            resp = client.post("/api/models/pull", json={"model": "no-such-model"})
+        job = client.get(f"/api/jobs/{resp.json()['job_id']}").json()
+
+        assert job["status"] == "failed"
+        assert "file does not exist" in job["error_message"]
+
     def test_second_pull_conflicts(self, models_client) -> None:
         client, _ = models_client
         from gramvault.api import jobs

@@ -7,6 +7,7 @@ in the bodies that need real logic (import).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import typer
@@ -60,6 +61,16 @@ def serve(
             "`auth.disabled: true` in config.yaml for a deliberately open deployment."
         )
         raise typer.Exit(code=2)
+
+    # The app (`gramvault.main`, imported by uvicorn) builds its Host
+    # allowlist from `config.server.host`; without this, `--host <ip>` bound
+    # that address but every request to it was rejected as an invalid Host.
+    # Env overrides reach a `--reload` worker process too.
+    if host:
+        os.environ["GRAMVAULT_SERVER__HOST"] = host
+    if port:
+        os.environ["GRAMVAULT_SERVER__PORT"] = str(port)
+    get_config.cache_clear()
 
     uvicorn.run(
         "gramvault.main:app",
@@ -644,8 +655,10 @@ def digest_command(
 
     config = get_config()
     selection = digest_engine.Selection(category=category, query=query)
+    digest_id: int | None = None
 
     async def run() -> str:
+        nonlocal digest_id
         with session_scope(config) as conn:
             item_ids = await digest_engine.select_items(conn, selection, config)
         if not item_ids:
@@ -681,6 +694,13 @@ def digest_command(
     try:
         markdown = asyncio.run(run())
     except Exception as exc:  # noqa: BLE001 - surface as a clean CLI error
+        if digest_id is not None:
+            with session_scope(config) as conn:
+                conn.execute(
+                    "UPDATE digests SET status = 'failed', error_message = ?, "
+                    "finished_at = datetime('now') WHERE id = ? AND status != 'done'",
+                    (str(exc), digest_id),
+                )
         typer.echo(f"Error: {exc}")
         raise typer.Exit(code=1) from exc
 
@@ -767,6 +787,19 @@ def migrate_command(
         target = latest_migration_version()
         if status_only:
             typer.echo(f"schema version: {current} (latest available: {target})")
+            return
+        is_fresh = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'items'"
+        ).fetchone() is None
+        if is_fresh:
+            # Migrations assume the base schema exists (002 alters `items`);
+            # run against an empty database they crashed with "no such
+            # table: items". A fresh DB gets the full schema instead.
+            init_db(conn)
+            typer.echo(
+                f"Created a fresh database at {config.resolved_db_path} "
+                f"(schema version {schema_version(conn)})."
+            )
             return
         if current >= target:
             typer.echo(f"Already up to date (schema version {current}).")

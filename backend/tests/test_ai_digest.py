@@ -249,3 +249,31 @@ class TestRunDigest:
 
         with pytest.raises(DigestError):
             await run_digest(digest_id, tmp_config)
+
+    @pytest.mark.anyio
+    async def test_cancel_finalizes_the_digest_row(
+        self, tmp_config: Config, tmp_db_conn, monkeypatch
+    ) -> None:
+        """A cancelled run returned early without touching the row, which
+        stayed `running` forever (startup cleanup didn't cover digests)."""
+        i1 = _seed(tmp_config, "something", category="books/manga")
+        with session_scope(tmp_config) as conn:
+            digest_id = conn.execute(
+                "INSERT INTO digests (name, template, status, selection_json, item_ids_json) "
+                "VALUES ('t', 'book-titles', 'pending', '{}', ?)",
+                (json.dumps([i1]),),
+            ).lastrowid
+        provider = AsyncMock()
+        provider.name = "ollama"
+        monkeypatch.setattr(
+            digest_engine, "get_provider", lambda task, config=None: (provider, "fake-model")
+        )
+
+        summary = await run_digest(digest_id, tmp_config, cancel_check=lambda: True)
+
+        assert summary["status"] == "cancelled"
+        provider.complete.assert_not_called()
+        with session_scope(tmp_config) as conn:
+            row = conn.execute("SELECT * FROM digests WHERE id = ?", (digest_id,)).fetchone()
+        assert row["status"] == "cancelled"
+        assert row["finished_at"] is not None

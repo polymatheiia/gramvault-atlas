@@ -612,6 +612,14 @@ async def run_digest(
     tokens_in = tokens_out = 0
     for done, batch in enumerate(batches):
         if cancel_check and cancel_check():
+            # Finalize the row: it was left `running` forever (in the UI's
+            # history too), since nothing else ever updates it.
+            with session_scope(config) as conn:
+                conn.execute(
+                    "UPDATE digests SET status = 'cancelled', tokens_in = ?, tokens_out = ?, "
+                    "finished_at = datetime('now') WHERE id = ?",
+                    (tokens_in, tokens_out, digest_id),
+                )
             return {"status": "cancelled", "batches_done": done, "entries": len(entries)}
         rows, t_in, t_out = await _extract_batch(provider, model, template, batch, valid_ids)
         entries.extend(rows)

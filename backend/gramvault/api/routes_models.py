@@ -246,6 +246,11 @@ async def pull_model(
     async def _work(ctx: jobs.JobContext) -> dict:
         last: dict = {}
         async for event in ollama_client.pull_model(model, config):
+            if event.get("error"):
+                # Ollama reports a failed pull (unknown model, disk full,
+                # network) as an `{"error": ...}` event on a 200 stream; it
+                # used to end the job as `done`.
+                raise RuntimeError(f"Ollama couldn't pull {model}: {event['error']}")
             last = event
             ctx.progress(
                 status=event.get("status"),
