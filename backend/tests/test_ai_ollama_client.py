@@ -116,13 +116,25 @@ class TestIsModelPulled:
 
     @pytest.mark.anyio
     @respx.mock
-    async def test_true_on_bare_name_match(self, tmp_config: Config) -> None:
-        # "llama3.1" (config-style bare name) should match a pulled
-        # "llama3.1:8b" tag.
+    async def test_bare_name_means_latest(self, tmp_config: Config) -> None:
+        # Ollama resolves an untagged name to `:latest`.
+        respx.get(f"{HOST}/api/tags").mock(
+            return_value=Response(200, json={"models": [{"name": "nomic-embed-text:latest"}]})
+        )
+        assert await is_model_pulled("nomic-embed-text", tmp_config) is True
+        assert await is_model_pulled("nomic-embed-text:latest", tmp_config) is True
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_a_different_tag_is_not_a_match(self, tmp_config: Config) -> None:
+        """Matching on the bare name made `llama3.1:70b` (or `llama3.1`, i.e.
+        `:latest`) look pulled when only `llama3.1:8b` was, so the readiness
+        check passed and every request then 404'd."""
         respx.get(f"{HOST}/api/tags").mock(
             return_value=Response(200, json={"models": [{"name": "llama3.1:8b"}]})
         )
-        assert await is_model_pulled("llama3.1", tmp_config) is True
+        assert await is_model_pulled("llama3.1:70b", tmp_config) is False
+        assert await is_model_pulled("llama3.1", tmp_config) is False
 
     @pytest.mark.anyio
     @respx.mock

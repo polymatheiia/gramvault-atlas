@@ -310,10 +310,12 @@ async def _ocr_media(config: Config, media_file: MediaFile) -> str | None:
 
 async def _embed_and_upsert(config: Config, item: Item) -> None:
     document = document_builder.build_content_document(item)
-    if not document:
-        return
-    chunks = document_builder.chunk_text(
-        document, config.chunking.chunk_size, config.chunking.chunk_overlap
+    chunks = (
+        document_builder.chunk_text(
+            document, config.chunking.chunk_size, config.chunking.chunk_overlap
+        )
+        if document
+        else []
     )
     provider, model = get_provider("embedding", config)
     for index, chunk in enumerate(chunks):
@@ -328,6 +330,9 @@ async def _embed_and_upsert(config: Config, item: Item) -> None:
             {"media_type": str(item.media_type)},
             config,
         )
+    # Upserts overwrite chunks 0..n-1 only; drop any a previous, longer
+    # version of this item's document left behind.
+    await asyncio.to_thread(embedding_store.prune_item_chunks, item.id, len(chunks), config)
 
 
 # --- per-item orchestration ----------------------------------------------------

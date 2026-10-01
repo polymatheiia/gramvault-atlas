@@ -297,10 +297,32 @@ def _parse_json_array(reply: str) -> list[dict]:
     text = reply.strip()
     if "```" in text:
         text = re.sub(r"```(?:json)?", "", text).strip()
-    start, end = text.find("["), text.rfind("]")
-    if start == -1 or end == -1 or end < start:
-        raise ValueError("no JSON array in model reply")
-    parsed = json.loads(text[start : end + 1])
+    try:
+        parsed: Any = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    if parsed is None:
+        # Prose around the JSON: fall back to the outermost [...] span.
+        start, end = text.find("["), text.rfind("]")
+        if start == -1 or end == -1 or end < start:
+            raise ValueError("no JSON array in model reply")
+        parsed = json.loads(text[start : end + 1])
+    if isinstance(parsed, dict):
+        # The extract call runs with json_mode, and a JSON mode that only
+        # allows an object (OpenAI-compatible `response_format:
+        # json_object`) can't return the bare array the prompt asks for —
+        # the model wraps it (`{"entries": [...]}`) or returns one entry.
+        if "item_id" in parsed:
+            parsed = [parsed]
+        else:
+            parsed = next(
+                (
+                    value
+                    for value in parsed.values()
+                    if isinstance(value, list) and any(isinstance(v, dict) for v in value)
+                ),
+                parsed,
+            )
     if not isinstance(parsed, list):
         raise ValueError("model reply was not a JSON array")
     return [row for row in parsed if isinstance(row, dict)]
