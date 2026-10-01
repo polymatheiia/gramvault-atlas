@@ -258,6 +258,10 @@ export async function streamChatMessage(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  // Whether `done` or `error` arrived. A stream that just ends without one
+  // (the server hit an error it didn't turn into an event, a proxy cut the
+  // connection) must still end the "Sending…" state in the caller.
+  let terminal = false
 
   const handleFrame = (rawFrame: string) => {
     let eventName = 'message'
@@ -277,9 +281,12 @@ export async function streamChatMessage(
         const parsed = JSON.parse(data) as { content: string }
         handlers.onToken?.(parsed.content)
       } else if (eventName === 'done') {
-        handlers.onDone?.(JSON.parse(data) as ChatStreamDonePayload)
+        const parsed = JSON.parse(data) as ChatStreamDonePayload
+        terminal = true
+        handlers.onDone?.(parsed)
       } else if (eventName === 'error') {
         const parsed = JSON.parse(data) as { detail: string }
+        terminal = true
         handlers.onError?.(parsed.detail)
       }
     } catch {
@@ -320,6 +327,7 @@ export async function streamChatMessage(
       drainFrames()
     }
     if (buffer.trim()) handleFrame(buffer)
+    if (!terminal) handlers.onError?.('The connection closed before the reply finished.')
   } catch {
     // Aborting `signal` mid-stream (Stop) tears down the fetch body reader
     // the same way a network drop would — tell them apart by the signal,

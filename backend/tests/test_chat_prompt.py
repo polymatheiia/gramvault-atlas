@@ -8,7 +8,7 @@ from datetime import datetime
 
 from gramvault.chat import prompt
 from gramvault.chat.retrieval import RetrievalResult
-from gramvault.models.schemas import Author, Item, MediaType, Tag
+from gramvault.models.schemas import Author, Item, MediaFile, MediaType, Tag
 
 
 def _make_item(item_id: int, **overrides) -> Item:
@@ -50,6 +50,28 @@ class TestBuildContextBlock:
         assert "2024-03-01" in block
         assert "sunset over the beach" in block
         assert "sunset" in block  # tag name
+
+    def test_includes_on_screen_text_even_when_there_is_a_caption(self) -> None:
+        """OCR text is often the whole point of a silent text-overlay reel,
+        but only reached the model via the snippet fallback — i.e. never
+        once the post had any caption at all."""
+        item = _make_item(
+            7,
+            caption="#recipe #food",
+            media_files=[
+                MediaFile(
+                    id=1,
+                    item_id=7,
+                    file_path="media/aa/a.mp4",
+                    media_type="video",
+                    ocr_text="3 eggs, 200g flour, bake 20 min",
+                )
+            ],
+        )
+        block = prompt.build_context_block(
+            {7: item}, [RetrievalResult(item_id=7, score=0.9, snippet=None)]
+        )
+        assert "On-screen text: 3 eggs, 200g flour, bake 20 min" in block
 
     def test_numbers_items_in_result_order(self) -> None:
         item1 = _make_item(1, caption="first item")

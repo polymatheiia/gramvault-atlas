@@ -15,6 +15,7 @@ import pytest
 import respx
 from httpx import Response
 
+from gramvault.ai.errors import ProviderError
 from gramvault.ai.ollama_client import (
     DEFAULT_CAPTION_PROMPT,
     ModelNotPulledError,
@@ -395,3 +396,22 @@ class TestStreamChat:
         with pytest.raises(ModelNotPulledError):
             async for _ in stream_chat([{"role": "user", "content": "hi"}], config=tmp_config):
                 pass
+
+    @pytest.mark.anyio
+    @respx.mock
+    async def test_in_stream_error_line_raises(self, tmp_config: Config) -> None:
+        """A failure after the 200 arrives as an `{"error": ...}` line; it
+        used to be skipped, saving a truncated reply as if complete."""
+        ndjson = "\n".join(
+            [
+                '{"message": {"content": "Hello "}, "done": false}',
+                '{"error": "model runner has unexpectedly stopped"}',
+            ]
+        )
+        respx.post(f"{HOST}/api/chat").mock(return_value=Response(200, content=ndjson))
+
+        chunks: list[str] = []
+        with pytest.raises(ProviderError, match="unexpectedly stopped"):
+            async for chunk in stream_chat([{"role": "user", "content": "hi"}], config=tmp_config):
+                chunks.append(chunk)
+        assert chunks == ["Hello "]

@@ -215,6 +215,28 @@ describe('streamChatMessage', () => {
     expect(tokens).toEqual(['hi'])
   })
 
+  it('calls onError when the stream ends without a done or error event', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(sseBody('event: token\r\ndata: {"content":"partial"}\r\n\r\n')),
+    )
+    const tokens: string[] = []
+    let error: string | undefined
+    await streamChatMessage(1, 'hello', { onToken: (t) => tokens.push(t), onError: (d) => (error = d) })
+    expect(tokens).toEqual(['partial'])
+    expect(error).toMatch(/closed before the reply finished/)
+  })
+
+  it('does not call onError after a done event', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(sseBody('event: done\r\ndata: {"message_id":1,"content":"hi","citations":[]}\r\n\r\n')),
+    )
+    const onError = vi.fn()
+    await streamChatMessage(1, 'hello', { onError })
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it('calls onError with the response detail on a non-ok response', async () => {
     vi.stubGlobal(
       'fetch',

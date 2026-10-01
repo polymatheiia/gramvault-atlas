@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import sqlite3
 from collections.abc import AsyncIterator
@@ -22,6 +23,8 @@ from gramvault.chat import prompt, retrieval
 from gramvault.config import Config, get_config
 from gramvault.db.session import get_connection, init_db
 from gramvault.models.schemas import ChatCitation, ChatMessage, ChatRole, ChatSession
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 6
 
@@ -258,7 +261,8 @@ async def stream_message(
         results_by_id = {r.item_id: r for r in results}
 
         citations_payload: list[dict[str, Any]] = []
-        for item_id in citation_item_ids:
+        # No assistant row (its insert failed) means nowhere to attach them.
+        for item_id in citation_item_ids if assistant_message_id is not None else []:
             result = results_by_id.get(item_id)
             snippet = result.snippet if result else None
             media_file_id = result.media_file_id if result else None
@@ -289,6 +293,15 @@ async def stream_message(
         }
     except ProviderNotReadyError as exc:
         yield {"event": "error", "data": json.dumps({"detail": str(exc)})}
+    except Exception as exc:  # noqa: BLE001 - must end the stream with a terminal event
+        # Anything else (a provider 4xx/5xx mid-stream, a DB error) used to
+        # propagate out of the generator: the SSE stream just closed with no
+        # `done`/`error` event and the chat UI waited forever.
+        logger.exception("chat stream for session %s failed", session_id)
+        yield {
+            "event": "error",
+            "data": json.dumps({"detail": f"The reply failed: {exc}"}),
+        }
     finally:
         conn.close()
 

@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from gramvault.ai.errors import ProviderNotReadyError
+from gramvault.ai.errors import ProviderError, ProviderNotReadyError
 from gramvault.config import Config, get_config
 
 
@@ -334,6 +334,11 @@ async def stream_chat(
                 if not line.strip():
                     continue
                 chunk = _json.loads(line)
+                if chunk.get("error"):
+                    # A failure after the 200 (e.g. the model ran out of
+                    # memory mid-reply) arrives as an `{"error": ...}` line;
+                    # ignoring it saved a truncated reply as if complete.
+                    raise ProviderError(f"Ollama error: {chunk['error']}")
                 content = chunk.get("message", {}).get("content", "")
                 if content:
                     yield content

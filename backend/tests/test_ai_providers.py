@@ -14,7 +14,11 @@ from httpx import Response
 
 from gramvault.ai.providers import get_provider
 from gramvault.ai.providers.anthropic_impl import AnthropicProvider
-from gramvault.ai.providers.base import ProviderCapabilityError, ProviderNotReadyError
+from gramvault.ai.providers.base import (
+    ProviderCapabilityError,
+    ProviderError,
+    ProviderNotReadyError,
+)
 from gramvault.ai.providers.ollama_impl import OllamaProvider
 from gramvault.ai.providers.openai_impl import OpenAICompatProvider
 from gramvault.config import Config, load_config
@@ -209,6 +213,28 @@ class TestAnthropicProvider:
         assert body["system"] == "be terse"
         assert body["messages"] == [{"role": "user", "content": "q?"}]
         assert route.calls.last.request.headers["x-api-key"] == "sk-ant"
+
+    @respx.mock
+    @pytest.mark.anyio
+    async def test_stream_error_event_raises(self) -> None:
+        """A mid-stream `error` event (e.g. overloaded_error) used to be
+        ignored, so the partial reply was saved as if complete."""
+        sse = (
+            "event: content_block_delta\n"
+            'data: {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hi"}}\n\n'
+            "event: error\n"
+            'data: {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}}\n\n'
+        )
+        respx.post("https://api.anthropic.com/v1/messages").mock(
+            return_value=Response(200, content=sse)
+        )
+        chunks: list[str] = []
+        with pytest.raises(ProviderError, match="Overloaded"):
+            async for chunk in AnthropicProvider(api_key="k").stream_chat(
+                "claude-sonnet-5", [{"role": "user", "content": "x"}]
+            ):
+                chunks.append(chunk)
+        assert chunks == ["Hi"]
 
     @respx.mock
     @pytest.mark.anyio
