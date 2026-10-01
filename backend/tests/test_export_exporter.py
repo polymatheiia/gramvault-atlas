@@ -526,3 +526,65 @@ class TestMediaModes:
         assert result.media_files_copied == 0
         # Should not raise, and the note should still be written.
         assert result.notes_written == 1
+
+
+class TestOverviewNotes:
+    def test_partial_export_leaves_index_dashboard_and_mocs_alone(self, tmp_path: Path) -> None:
+        """Exporting a selection rebuilt the index table, dashboard counts
+        and each touched category's MOC from just the selection."""
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+        export_items(config, [_item(i, category="beauty") for i in (1, 2, 3)])
+        target = vault_dir / "GramVault"
+        before = {
+            name: (target / name).read_text(encoding="utf-8")
+            for name in ("GramVault Index.md", "GramVault Dashboard.md", "_moc/beauty.md")
+        }
+
+        result = export_items(
+            config, [_item(2, category="beauty", caption="edited")], write_overview=False
+        )
+
+        assert result.notes_updated == 1
+        assert "edited" in (target / note_filename(_item(2))).read_text(encoding="utf-8")
+        for name, text in before.items():
+            assert (target / name).read_text(encoding="utf-8") == text
+
+    def test_dashboard_keeps_notes_below_its_end_marker(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+        dashboard = export_items(config, [_item(1)]).dashboard_path
+        assert dashboard is not None
+        dashboard.write_text(
+            dashboard.read_text(encoding="utf-8") + "\nmy weekly review notes\n", encoding="utf-8"
+        )
+
+        export_items(config, [_item(1), _item(2)])
+
+        text = dashboard.read_text(encoding="utf-8")
+        assert "my weekly review notes" in text
+        assert "2 item(s) in the last export" in text
+
+    def test_dataview_queries_use_the_vault_relative_subfolder(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+
+        result = export_items(config, [_item(1, category="beauty")], "Notes/GramVault")
+
+        assert result.index_path is not None and result.dashboard_path is not None
+        for path in (result.index_path, result.dashboard_path, *result.moc_paths):
+            assert 'FROM "Notes/GramVault"' in path.read_text(encoding="utf-8")
+
+    def test_note_and_favourite_are_exported(self, tmp_path: Path) -> None:
+        vault_dir = tmp_path / "vault"
+        vault_dir.mkdir()
+        config = _config(tmp_path, vault_dir=vault_dir)
+
+        export_items(config, [_item(1, favourite=True, user_note="try this on Sunday")])
+
+        text = (vault_dir / "GramVault" / note_filename(_item(1))).read_text(encoding="utf-8")
+        assert "favourite: true" in text
+        assert "## My note\n\ntry this on Sunday" in text

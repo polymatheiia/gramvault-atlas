@@ -48,3 +48,17 @@ def test_skips_unfinished_empty_query_scoped_and_uncategorized(
     _insert_digest(tmp_db_conn, name="nocat", selection={"item_ids": [1, 2]}, markdown="n1")
 
     assert load_latest_category_digests(tmp_db_conn) == {}
+
+
+def test_load_items_carries_favourite_and_user_note(tmp_db_conn: sqlite3.Connection) -> None:
+    from gramvault.export.repository import load_items
+
+    tmp_db_conn.execute(
+        "INSERT INTO items (media_type, favourite, user_note) VALUES ('photo', 1, 'remember')"
+    )
+    tmp_db_conn.commit()
+
+    (item,) = load_items(tmp_db_conn)
+
+    assert item.favourite is True
+    assert item.user_note == "remember"

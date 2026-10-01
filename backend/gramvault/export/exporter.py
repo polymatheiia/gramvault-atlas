@@ -242,9 +242,16 @@ def export_items(
     *,
     category_digests: dict[str, str] | None = None,
     prune_stale_mocs: bool = False,
+    write_overview: bool = True,
 ) -> ExportResult:
     """Export `items` into the configured Obsidian vault. Idempotent --
     see module docstring.
+
+    `write_overview=False` (a partial export of selected items) writes only
+    those items' notes and leaves the index, dashboard and category MOCs
+    alone: they're built from the items passed in, so regenerating them
+    from a selection replaced the whole library's listings and counts with
+    just the selection. A whole-library export refreshes them.
 
     `category_digests` (category name -> raw digest markdown) embeds the
     latest digest for each category into its MOC note (§G3); the export
@@ -256,6 +263,12 @@ def export_items(
     """
     target_dir = resolve_export_target(config, vault_subfolder)
     media_dir = target_dir / MEDIA_SUBDIR_NAME
+    # Dataview's `FROM "<folder>"` takes a vault-relative path; the bare last
+    # segment (`target_dir.name`) matched nothing for a nested subfolder
+    # like `Notes/GramVault`.
+    vault_dir = config.resolved_obsidian_vault_dir
+    assert vault_dir is not None  # resolve_export_target checked it
+    subfolder_path = target_dir.relative_to(vault_dir.resolve()).as_posix()
 
     result = ExportResult(target_dir=target_dir)
     existing_notes_by_id = _scan_existing_notes_by_gramvault_id(target_dir)
@@ -311,15 +324,24 @@ def export_items(
         if item.category:
             entries_by_category.setdefault(item.category, []).append(entry)
 
-    index_markdown = build_index_markdown(index_entries, subfolder_name=target_dir.name)
+    if not write_overview:
+        return result
+
+    index_markdown = build_index_markdown(index_entries, subfolder_name=subfolder_path)
     index_path = target_dir / INDEX_NOTE_FILENAME
     index_path.write_text(index_markdown, encoding="utf-8")
     result.index_path = index_path
 
+    # The dashboard invites notes below its end marker — carry them over
+    # rather than overwriting them on every export.
     dashboard_path = target_dir / DASHBOARD_NOTE_FILENAME
-    dashboard_path.write_text(
-        build_dashboard_markdown(items, subfolder_name=target_dir.name), encoding="utf-8"
+    dashboard_tail = (
+        user_tail(dashboard_path.read_text(encoding="utf-8")) if dashboard_path.is_file() else ""
     )
+    dashboard_text = build_dashboard_markdown(items, subfolder_name=subfolder_path)
+    if dashboard_tail:
+        dashboard_text += f"\n{dashboard_tail}\n"
+    dashboard_path.write_text(dashboard_text, encoding="utf-8")
     result.dashboard_path = dashboard_path
 
     _write_category_mocs(
@@ -328,6 +350,7 @@ def export_items(
         items,
         category_digests or {},
         result,
+        subfolder_path=subfolder_path,
         prune_stale=prune_stale_mocs,
     )
 
@@ -341,6 +364,7 @@ def _write_category_mocs(
     category_digests: dict[str, str],
     result: ExportResult,
     *,
+    subfolder_path: str,
     prune_stale: bool = False,
 ) -> None:
     """One managed MOC note per category present in this export, under
@@ -361,7 +385,7 @@ def _write_category_mocs(
             build_moc_markdown(
                 category,
                 entries,
-                subfolder_name=target_dir.name,
+                subfolder_name=subfolder_path,
                 digest_markdown=digest_md,
                 existing_text=existing,
             ),

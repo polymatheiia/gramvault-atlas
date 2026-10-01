@@ -3,8 +3,8 @@ audit §5.1 "Favourites / user notes").
 
 Two plain columns on `items`: `favourite` (a flag, filterable from the
 gallery) and `user_note` (free text, shown/edited on the item page and
-carried into the Obsidian export's user-tail — see
-`export/markdown_builder.py`). Deliberately not indexed into `items_fts`:
+exported as a "My note" section of the Obsidian note's managed body —
+see `export/markdown_builder.py`). Deliberately not indexed into `items_fts`:
 that would mean keeping `chat/fts.py`'s reindex triggers, `_ROW_SELECT`,
 and the FTS schema all in sync with a column that changes on every
 keystroke of a note edit, for a "search my own notes" feature nobody
