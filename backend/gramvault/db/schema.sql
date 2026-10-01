@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS tags (
 CREATE TABLE IF NOT EXISTS item_tags (
     item_id     INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
     tag_id      INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    manual      INTEGER NOT NULL DEFAULT 0, -- migration 010: link added by the user
     PRIMARY KEY (item_id, tag_id)
 );
 

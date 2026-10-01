@@ -285,3 +285,29 @@ class TestItemsFtsMigration:
             ).fetchone()[0] == 1
         finally:
             conn.close()
+
+
+class TestItemTagManualMigration:
+    def test_adds_column_and_backfills_manual_kind_links(self, tmp_path) -> None:
+        conn = get_connection(
+            Config.model_validate({"paths": {"db_path": str(tmp_path / "old.db")}})
+        )
+        try:
+            init_db(conn)
+            conn.execute("INSERT INTO items (id, media_type) VALUES (1, 'photo')")
+            conn.execute("INSERT INTO tags (id, name, kind) VALUES (1, 'mine', 'manual')")
+            conn.execute("INSERT INTO tags (id, name, kind) VALUES (2, 'cooking', 'hashtag')")
+            conn.execute("INSERT INTO item_tags (item_id, tag_id) VALUES (1, 1), (1, 2)")
+            # Simulate a DB stamped before 010.
+            conn.executescript(
+                "ALTER TABLE item_tags DROP COLUMN manual; PRAGMA user_version = 9;"
+            )
+            conn.commit()
+
+            migrate(conn)
+
+            manual = dict(conn.execute("SELECT tag_id, manual FROM item_tags").fetchall())
+            assert manual == {1: 1, 2: 0}
+            assert schema_version(conn) == latest_migration_version()
+        finally:
+            conn.close()

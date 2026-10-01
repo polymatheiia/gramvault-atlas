@@ -110,7 +110,9 @@ def _fetch_media_files(conn: sqlite3.Connection, item_id: int) -> list[MediaFile
 def _fetch_tags(conn: sqlite3.Connection, item_id: int) -> list[Tag]:
     rows = conn.execute(
         """
-        SELECT tags.* FROM tags
+        SELECT tags.id, tags.name,
+               CASE WHEN item_tags.manual = 1 THEN 'manual' ELSE tags.kind END AS kind
+        FROM tags
         JOIN item_tags ON item_tags.tag_id = tags.id
         WHERE item_tags.item_id = ?
         ORDER BY tags.name
@@ -735,27 +737,22 @@ async def update_item_tags(
 ) -> Item:
     """Replace an item's manually-assigned tags.
 
-    Decision: only tags of kind='manual' are replaced by this endpoint —
-    auto-generated tags (from the AI pipeline) and hashtag tags (parsed
-    from captions) are left untouched, since a user editing "their" tags
-    shouldn't accidentally wipe out AI-generated ones. Any name in
-    `body.tags` that doesn't already exist as a tag is created as
-    kind='manual'; if it already exists under any kind, the existing tag
-    row is simply (re-)linked to this item.
+    Decision: only links the user added (`item_tags.manual = 1`, migration
+    010) are replaced by this endpoint — auto-generated tags (from the AI
+    pipeline) and hashtag tags (parsed from captions) are left untouched,
+    since a user editing "their" tags shouldn't accidentally wipe out
+    AI-generated ones. Any name in `body.tags` that doesn't already exist
+    as a tag is created as kind='manual'; if it already exists under any
+    kind, the existing tag row is linked to this item and that link is
+    marked manual, so it can be removed again later. Item responses report
+    a manual link's tag with `kind='manual'`.
     """
     with session_scope(config) as conn:
         exists = conn.execute("SELECT 1 FROM items WHERE id = ?", (item_id,)).fetchone()
         if exists is None:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
-        conn.execute(
-            """
-            DELETE FROM item_tags
-            WHERE item_id = ?
-              AND tag_id IN (SELECT id FROM tags WHERE kind = 'manual')
-            """,
-            (item_id,),
-        )
+        conn.execute("DELETE FROM item_tags WHERE item_id = ? AND manual = 1", (item_id,))
         for raw_name in body.tags:
             name = raw_name.strip()
             if not name:
@@ -767,7 +764,8 @@ async def update_item_tags(
             )
             tag_row = conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()
             conn.execute(
-                "INSERT OR IGNORE INTO item_tags (item_id, tag_id) VALUES (?, ?)",
+                "INSERT INTO item_tags (item_id, tag_id, manual) VALUES (?, ?, 1) "
+                "ON CONFLICT(item_id, tag_id) DO UPDATE SET manual = 1",
                 (item_id, tag_row["id"]),
             )
 

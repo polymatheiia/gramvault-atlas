@@ -403,7 +403,8 @@ def fetch_items(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, Item
 
     tag_rows = conn.execute(
         f"""
-        SELECT it.item_id AS item_id, t.id AS id, t.name AS name, t.kind AS kind
+        SELECT it.item_id AS item_id, t.id AS id, t.name AS name,
+               CASE WHEN it.manual = 1 THEN 'manual' ELSE t.kind END AS kind
         FROM item_tags it
         JOIN tags t ON t.id = it.tag_id
         WHERE it.item_id IN ({placeholders})
