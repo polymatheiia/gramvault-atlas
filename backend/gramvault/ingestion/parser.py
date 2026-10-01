@@ -490,8 +490,15 @@ def _parse_own_posts(
             if not media_list:
                 continue
 
-            caption = entry.get("title") or None
-            post_ts = entry.get("creation_timestamp")
+            # Single-media posts carry their caption and timestamp on the
+            # media entry rather than the post entry (carousels put them on
+            # the post), and the caption is mojibake-encoded like every
+            # other string in the export (see `_repair_mojibake`).
+            first_media = next((m for m in media_list if isinstance(m, dict)), {})
+            raw_caption = entry.get("title") or None
+            caption = _repair_mojibake(raw_caption or first_media.get("title")) or None
+            raw_ts = entry.get("creation_timestamp")
+            post_ts = raw_ts if isinstance(raw_ts, (int, float)) else first_media.get("creation_timestamp")
             posted_at = (
                 datetime.fromtimestamp(post_ts, tz=UTC)
                 if isinstance(post_ts, (int, float))
@@ -547,7 +554,9 @@ def _parse_own_posts(
             # stable synthetic id from the first media reference (or the
             # caption+timestamp if no media uri is available) so
             # re-imports of the same ZIP dedupe correctly.
-            seed = media_files[0].uri or f"{caption}|{post_ts}"
+            # Built from the raw entry fields (not the repaired/fallback
+            # ones above) so ids from earlier imports stay stable.
+            seed = media_files[0].uri or f"{raw_caption}|{raw_ts}"
             external_id = f"post:{hashlib.sha256(str(seed).encode('utf-8')).hexdigest()[:16]}"
 
             posts.append(

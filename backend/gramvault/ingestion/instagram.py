@@ -59,6 +59,11 @@ _MAX_DELAY = 7.0
 
 # Cookie names a usable Instagram session must contain.
 _REQUIRED_COOKIE = "sessionid"
+# Netscape cookies.txt prefix marking an HttpOnly cookie (curl's convention).
+_HTTPONLY_PREFIX = "#HttpOnly_"
+# Download failures in a row before the walk gives up (rate-limited or the
+# session went stale) — what was downloaded so far is still imported.
+_MAX_CONSECUTIVE_FAILURES = 5
 
 _SAVED_POSTS_ARCNAME = "your_instagram_activity/saved/saved_posts.json"
 
@@ -178,7 +183,12 @@ def parse_cookies(text: str) -> dict[str, str]:
         jar = {}
         for line in text.splitlines():
             line = line.strip()
-            if not line or line.startswith("#"):
+            # HttpOnly cookies — `sessionid` among them — are written as
+            # `#HttpOnly_<domain>\t...`, which a plain "skip # comments"
+            # rule threw away along with the real comments.
+            if line.startswith(_HTTPONLY_PREFIX):
+                line = line[len(_HTTPONLY_PREFIX) :]
+            elif not line or line.startswith("#"):
                 continue
             parts = line.split("\t")
             if len(parts) >= 7 and "instagram" in parts[0]:
@@ -483,37 +493,56 @@ def pull_saved(
 
         entries: list[dict[str, Any]] = []
         consecutive_known = 0
+        consecutive_failures = 0
 
         profile = instaloader.Profile.own_profile(loader.context)
-        for post in profile.get_saved_posts():
-            if cancelled():
-                result.stopped_reason = "cancelled"
-                break
-            result.scanned += 1
-            if result.scanned > max_count:
-                result.stopped_reason = f"reached the {max_count}-post limit"
-                break
-
-            shortcode = post.shortcode
-            if shortcode in known:
-                consecutive_known += 1
-                if not download_all and consecutive_known >= stop_after_known:
-                    result.stopped_reason = "caught up with the library"
+        try:
+            for post in profile.get_saved_posts():
+                if cancelled():
+                    result.stopped_reason = "cancelled"
                     break
-                emit()
-                continue
-            consecutive_known = 0
-            result.new += 1
+                result.scanned += 1
+                if result.scanned > max_count:
+                    result.stopped_reason = f"reached the {max_count}-post limit"
+                    break
 
-            try:
-                loader.download_post(post, target="")
-                entries.append(_entry_for_post(post))
-                result.downloaded += 1
-            except exc_mod.ConnectionException as exc:
-                result.failed += 1
-                logger.warning("instagram pull: %s failed: %s", shortcode, exc)
-            emit()
-            _sleep()
+                shortcode = post.shortcode
+                if shortcode in known:
+                    consecutive_known += 1
+                    if not download_all and consecutive_known >= stop_after_known:
+                        result.stopped_reason = "caught up with the library"
+                        break
+                    emit()
+                    continue
+                consecutive_known = 0
+                result.new += 1
+
+                try:
+                    loader.download_post(post, target="")
+                    entries.append(_entry_for_post(post))
+                    result.downloaded += 1
+                    consecutive_failures = 0
+                except exc_mod.InstaloaderException as exc:
+                    # Any per-post failure — a 403/400 on one post, a post
+                    # deleted mid-walk — not just ConnectionException (the
+                    # only one caught before): anything else aborted the
+                    # walk, and the `finally` below discarded every download.
+                    result.failed += 1
+                    consecutive_failures += 1
+                    logger.warning("instagram pull: %s failed: %s", shortcode, exc)
+                    if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                        result.stopped_reason = (
+                            f"stopped after {consecutive_failures} failed downloads in a row "
+                            f"(last: {exc})"
+                        )
+                        break
+                emit()
+                _sleep()
+        except exc_mod.InstaloaderException as exc:
+            # The saved-feed walk itself failed (rate limited, session
+            # expired mid-walk): import what was downloaded so far.
+            logger.warning("instagram pull: walking the saved feed failed: %s", exc)
+            result.stopped_reason = f"stopped early: {exc}"
 
         if not entries:
             return result

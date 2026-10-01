@@ -295,6 +295,13 @@ def link_local_media(
             if prepared:
                 report.files_linked += len(prepared)
                 report.items_linked += 1
+                # New media needs captioning/transcription/re-embedding; a
+                # `done` item would otherwise be skipped by every "enrich
+                # what's pending" run (the Import page's button, `gramvault
+                # enrich`), leaving the linked media un-enriched.
+                conn.execute(
+                    "UPDATE items SET enrichment_status = 'pending' WHERE id = ?", (item_id,)
+                )
 
             resolved = _resolve_media_type(row["media_type"], row["permalink"], ordered)
             if resolved is not None:

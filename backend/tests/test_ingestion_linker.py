@@ -345,3 +345,17 @@ def test_link_media_does_not_hold_the_write_lock_while_hashing(
 
     assert report.items_linked == 3
     assert lock_free == [True, True, True]
+
+
+def test_link_media_requeues_the_item_for_enrichment(tmp_path: Path, tmp_config: Config) -> None:
+    """Newly linked media needs captioning/transcription, but an already
+    `done` item was skipped by every "enrich what's pending" run."""
+    import_zip(_write_export(tmp_path, [_saved_entry("https://www.instagram.com/p/DONE1/")]), tmp_config)
+    with session_scope(tmp_config) as conn:
+        conn.execute("UPDATE items SET enrichment_status = 'done'")
+
+    link_local_media(_downloads(tmp_path, {"DONE1.jpg": b"\xff\xd8\xff\xe0done"}), tmp_config)
+
+    with session_scope(tmp_config) as conn:
+        status = conn.execute("SELECT enrichment_status FROM items").fetchone()[0]
+    assert status == "pending"
