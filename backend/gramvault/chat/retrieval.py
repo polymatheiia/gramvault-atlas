@@ -66,10 +66,20 @@ class SearchFilters:
     media_type: str | None = None
     date_from: str | None = None
     date_to: str | None = None
+    tag: str | None = None
+    favourite: bool = False
 
     def is_empty(self) -> bool:
         return not any(
-            (self.category, self.author, self.media_type, self.date_from, self.date_to)
+            (
+                self.category,
+                self.author,
+                self.media_type,
+                self.date_from,
+                self.date_to,
+                self.tag,
+                self.favourite,
+            )
         )
 
 
@@ -101,6 +111,14 @@ def filter_item_ids(
     if filters.date_to:
         clauses.append("items.taken_at <= ?")
         params.append(filters.date_to)
+    if filters.tag:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM item_tags JOIN tags ON tags.id = item_tags.tag_id "
+            "WHERE item_tags.item_id = items.id AND tags.name = ?)"
+        )
+        params.append(filters.tag)
+    if filters.favourite:
+        clauses.append("items.favourite = 1")
 
     rows = conn.execute(
         f"SELECT items.id AS id FROM items {joins} WHERE {' AND '.join(clauses)}", params
@@ -385,7 +403,8 @@ def fetch_items(conn: sqlite3.Connection, item_ids: list[int]) -> dict[int, Item
 
     tag_rows = conn.execute(
         f"""
-        SELECT it.item_id AS item_id, t.id AS id, t.name AS name, t.kind AS kind
+        SELECT it.item_id AS item_id, t.id AS id, t.name AS name,
+               CASE WHEN it.manual = 1 THEN 'manual' ELSE t.kind END AS kind
         FROM item_tags it
         JOIN tags t ON t.id = it.tag_id
         WHERE it.item_id IN ({placeholders})

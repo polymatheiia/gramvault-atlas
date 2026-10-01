@@ -42,8 +42,7 @@ export function filterSearch(params: URLSearchParams): string {
 }
 
 /** Facet params shared by `/api/library/items`, `/api/library/item-ids`,
- * and (author/media_type/tag/date_from/date_to only — see
- * `fetchSiblingIds`) `/api/chat/search`. `category` here is passed through
+ * and `/api/chat/search`. `category` here is passed through
  * verbatim, including the `UNCATEGORIZED` sentinel — callers that hit
  * semantic search have to handle that sentinel specially, since
  * `SearchFilters` on the backend doesn't understand it the way
@@ -70,13 +69,14 @@ export async function fetchSiblingIds(
 ): Promise<number[]> {
   const search = params.get('search')?.trim()
   const category = params.get('category')
+  const favourite = params.get('favourite') === '1'
 
   if (search && searchModeOf(params) === 'semantic') {
     const facets = facetParams(params)
     if (category === UNCATEGORIZED) delete facets.category
     const res = await api.get<SemanticSearchResponse>(
       '/api/chat/search',
-      { q: search, top_k: 100, ...facets },
+      { q: search, top_k: 100, ...facets, ...(favourite ? { favourite: true } : {}) },
       signal,
     )
     let results = res.results
@@ -84,7 +84,6 @@ export async function fetchSiblingIds(
     return results.map((r) => r.item.id).filter((id): id is number => id != null)
   }
 
-  const favourite = params.get('favourite') === '1'
   const res = await api.get<ItemIdListResponse>(
     '/api/library/item-ids',
     {

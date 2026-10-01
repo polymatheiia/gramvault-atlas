@@ -87,6 +87,8 @@ def load_items(conn: sqlite3.Connection, item_ids: list[int] | None = None) -> l
                 category_source=data.get("category_source"),
                 category_confidence=data.get("category_confidence"),
                 category_reason=data.get("category_reason"),
+                favourite=bool(data.get("favourite")),
+                user_note=data.get("user_note"),
                 tags=_load_tags(conn, item_id),
                 media_files=_load_media_files(conn, item_id),
             )

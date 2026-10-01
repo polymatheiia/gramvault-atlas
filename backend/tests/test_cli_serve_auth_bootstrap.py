@@ -115,3 +115,71 @@ def test_token_command_show_and_rotate(
 
     show_again = runner.invoke(app, ["token", "show"])
     assert show_again.stdout.strip() != first_token
+
+
+def test_generated_token_is_enforced_without_a_config_yaml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No config.yaml anywhere (a bare `pip install` + `gramvault serve`):
+    the token written to ./secrets.yaml must be the one the running server
+    enforces. It used to be written but never read back — `get_config()`
+    only looked for secrets.yaml beside a config.yaml it had found — so the
+    API ran wide open while the CLI printed a token."""
+    monkeypatch.delenv(config_module.CONFIG_PATH_ENV_VAR, raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("uvicorn.run", MagicMock())
+    config_module.get_config.cache_clear()
+
+    first = runner.invoke(app, ["serve"])
+    assert first.exit_code == 0
+    assert "Generated an API token" in first.stdout
+    written = yaml.safe_load((tmp_path / "secrets.yaml").read_text())["auth"]["token"]
+
+    config_module.get_config.cache_clear()
+    assert config_module.get_config().auth.token == written
+
+    second = runner.invoke(app, ["serve"])
+    assert second.exit_code == 0
+    assert "Generated an API token" not in second.stdout
+    config_module.get_config.cache_clear()
+
+
+def test_serve_host_override_reaches_the_app_config(
+    isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--host` bound the address, but the app's Host allowlist came from
+    config.yaml's `server.host`, so every request to the overridden address
+    was rejected with 400 "Invalid host header"."""
+    for name in ("GRAMVAULT_SERVER__HOST", "GRAMVAULT_SERVER__PORT"):
+        monkeypatch.setenv(name, "placeholder")  # so monkeypatch restores "unset"
+        monkeypatch.delenv(name)
+    monkeypatch.setattr("uvicorn.run", MagicMock())
+
+    result = runner.invoke(app, ["serve", "--host", "100.64.0.5", "--port", "9123"])
+
+    assert result.exit_code == 0
+    config_module.get_config.cache_clear()
+    server = config_module.get_config().server
+    assert (server.host, server.port) == ("100.64.0.5", 9123)
+
+    from fastapi.testclient import TestClient
+
+    from gramvault.main import create_app
+
+    app_config = config_module.get_config().model_copy(deep=True)
+    app_config.auth.token = None
+    with TestClient(create_app(app_config), base_url="http://100.64.0.5:9123") as client:
+        assert client.get("/api/health").status_code == 200
+
+
+def test_migrate_on_a_fresh_database_creates_the_schema(isolated_config: Path) -> None:
+    """Migrations assume the base schema; on an empty DB `gramvault migrate`
+    crashed with "no such table: items"."""
+    result = runner.invoke(app, ["migrate"])
+
+    assert result.exit_code == 0, result.output
+    assert "fresh database" in result.stdout
+    status = runner.invoke(app, ["migrate", "--status"])
+    from gramvault.db.session import latest_migration_version
+
+    assert f"schema version: {latest_migration_version()}" in status.stdout

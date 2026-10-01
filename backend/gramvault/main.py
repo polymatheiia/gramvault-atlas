@@ -86,7 +86,7 @@ def create_app(config: Config | None = None) -> FastAPI:
                 "WHERE enrichment_status = 'running'"
             ).rowcount
             jobs_reset = jobs.reclaim_orphans(conn)
-            for table in ("import_jobs", "export_jobs"):
+            for table in ("import_jobs", "export_jobs", "digests"):
                 conn.execute(
                     f"UPDATE {table} SET status = 'failed', "
                     "error_message = COALESCE(error_message, 'interrupted by restart'), "

@@ -125,6 +125,29 @@ def read_manifest(archive_path: Path) -> BackupManifest:
     return BackupManifest(**data)
 
 
+def _restore_db_file(snapshot: Path, db_path: Path) -> None:
+    """Write `snapshot` into the live database at `db_path` through
+    SQLite's backup API rather than copying the file over it. The live DB
+    runs in WAL mode: a plain file copy leaves its `-wal`/`-shm` beside the
+    new file, and SQLite replays that stale WAL on the next open —
+    resurrecting post-backup writes, or corrupting the restored DB. The
+    backup API goes through SQLite's own locking and WAL handling instead."""
+    source = sqlite3.connect(str(snapshot))
+    try:
+        dest = sqlite3.connect(str(db_path))
+        try:
+            source.backup(dest)
+        finally:
+            dest.close()
+    except sqlite3.Error as exc:
+        raise BackupError(
+            f"Couldn't restore the database into {db_path} ({exc}). "
+            "Stop the server and try again."
+        ) from exc
+    finally:
+        source.close()
+
+
 def restore_backup(config: Config, archive_path: Path) -> BackupManifest:
     """Extract `archive_path` over the configured db/chroma paths.
     Destructive — overwrites the current database and vector store.
@@ -151,7 +174,7 @@ def restore_backup(config: Config, archive_path: Path) -> BackupManifest:
         tmp_db = Path(tmp) / DB_ARCNAME
         if not tmp_db.is_file():
             raise BackupError(f"{archive_path} has no {DB_ARCNAME}")
-        shutil.copy2(tmp_db, db_path)
+        _restore_db_file(tmp_db, db_path)
 
         tmp_chroma = Path(tmp) / CHROMA_ARCNAME
         if tmp_chroma.is_dir():

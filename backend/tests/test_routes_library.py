@@ -615,3 +615,53 @@ def test_item_ids_accepts_sort_too_and_matches_items_order(
     resp = client.get("/api/library/item-ids", params={"sort": "author"})
 
     assert resp.json()["ids"] == [ids["item1_id"], ids["item2_id"]]
+
+
+def test_list_items_date_to_bare_date_includes_that_whole_day(
+    client: TestClient, tmp_config: Config
+) -> None:
+    """The gallery's date inputs send `YYYY-MM-DD`, which parses to
+    midnight — as a `<=` bound that excluded the whole `date_to` day, so a
+    one-day range matched nothing."""
+    with session_scope(tmp_config) as conn:
+        conn.execute(
+            "INSERT INTO items (external_id, media_type, taken_at) "
+            "VALUES ('noon', 'photo', '2024-01-05T12:00:00+00:00')"
+        )
+
+    response = client.get(
+        "/api/library/items", params={"date_from": "2024-01-05", "date_to": "2024-01-05"}
+    )
+
+    assert response.status_code == 200
+    assert [i["external_id"] for i in response.json()["items"]] == ["noon"]
+
+
+def test_item_timestamps_are_serialized_as_utc(client: TestClient, tmp_config: Config) -> None:
+    """`imported_at` comes from SQLite's `datetime('now')` — UTC with no
+    offset. Serialized without one, browsers read it as local time."""
+    ids = _seed_library(tmp_config)
+
+    body = client.get(f"/api/library/items/{ids['item1_id']}").json()
+
+    assert body["imported_at"].endswith(("Z", "+00:00"))
+
+
+def test_a_tag_added_by_hand_can_be_removed_even_if_its_name_is_a_hashtag(
+    client: TestClient, tmp_config: Config
+) -> None:
+    """Adding a name that already existed as a hashtag/auto tag linked that
+    tag, and removal only unlinked `kind='manual'` tags — so the tag could
+    never be removed (and showed as non-removable in the UI)."""
+    ids = _seed_library(tmp_config)  # 'travel' exists as an auto tag (on item 1)
+    url = f"/api/library/items/{ids['item2_id']}/tags"
+
+    added = client.patch(url, json={"tags": ["travel"]}).json()
+    assert [(t["name"], t["kind"]) for t in added["tags"]] == [("travel", "manual")]
+
+    removed = client.patch(url, json={"tags": []}).json()
+    assert removed["tags"] == []
+
+    # Item 1's own (auto) link to the same tag is untouched.
+    item1 = client.get(f"/api/library/items/{ids['item1_id']}").json()
+    assert [(t["name"], t["kind"]) for t in item1["tags"]] == [("travel", "auto")]

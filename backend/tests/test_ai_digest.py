@@ -14,6 +14,7 @@ from gramvault.ai.digest import (
     DigestError,
     DigestTemplate,
     Selection,
+    _parse_json_array,
     _postprocess,
     _reduce,
     plan_batches,
@@ -249,3 +250,54 @@ class TestRunDigest:
 
         with pytest.raises(DigestError):
             await run_digest(digest_id, tmp_config)
+
+    @pytest.mark.anyio
+    async def test_cancel_finalizes_the_digest_row(
+        self, tmp_config: Config, tmp_db_conn, monkeypatch
+    ) -> None:
+        """A cancelled run returned early without touching the row, which
+        stayed `running` forever (startup cleanup didn't cover digests)."""
+        i1 = _seed(tmp_config, "something", category="books/manga")
+        with session_scope(tmp_config) as conn:
+            digest_id = conn.execute(
+                "INSERT INTO digests (name, template, status, selection_json, item_ids_json) "
+                "VALUES ('t', 'book-titles', 'pending', '{}', ?)",
+                (json.dumps([i1]),),
+            ).lastrowid
+        provider = AsyncMock()
+        provider.name = "ollama"
+        monkeypatch.setattr(
+            digest_engine, "get_provider", lambda task, config=None: (provider, "fake-model")
+        )
+
+        summary = await run_digest(digest_id, tmp_config, cancel_check=lambda: True)
+
+        assert summary["status"] == "cancelled"
+        provider.complete.assert_not_called()
+        with session_scope(tmp_config) as conn:
+            row = conn.execute("SELECT * FROM digests WHERE id = ?", (digest_id,)).fetchone()
+        assert row["status"] == "cancelled"
+        assert row["finished_at"] is not None
+
+
+class TestParseJsonArray:
+    def test_bare_array_and_array_inside_prose(self) -> None:
+        assert _parse_json_array('[{"item_id": 1}]') == [{"item_id": 1}]
+        assert _parse_json_array('Here you go:\n```json\n[{"item_id": 2}]\n```') == [
+            {"item_id": 2}
+        ]
+
+    def test_array_wrapped_in_an_object(self) -> None:
+        """OpenAI-compatible json_object mode can't return a bare array, so
+        the model wraps it; parsing used to slice from the first `[` to the
+        last `]`, which breaks on a second list in the object."""
+        reply = '{"entries": [{"title": "Dune", "item_id": 1}], "notes": ["n/a"]}'
+        assert _parse_json_array(reply) == [{"title": "Dune", "item_id": 1}]
+
+    def test_single_entry_object(self) -> None:
+        reply = '{"title": "Dune", "tags": ["sci-fi"], "item_id": 4}'
+        assert _parse_json_array(reply) == [{"title": "Dune", "tags": ["sci-fi"], "item_id": 4}]
+
+    def test_no_json_raises(self) -> None:
+        with pytest.raises(ValueError):
+            _parse_json_array("I couldn't find anything.")

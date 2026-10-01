@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 
-from gramvault.ai.errors import ProviderNotReadyError
+from gramvault.ai.errors import ProviderError, ProviderNotReadyError
 from gramvault.config import Config, get_config
 
 
@@ -98,12 +98,17 @@ async def is_model_pulled(model: str, config: Config | None = None) -> bool:
             data = resp.json()
     except httpx.ConnectError as exc:
         raise OllamaNotRunningError(config.ollama.host, exc) from exc
-    names = {m.get("name") for m in data.get("models", [])}
-    # Ollama tags are often "name:tag" — also accept a bare-name match so
-    # "llama3.1:8b" matches a config value of "llama3.1".
-    if model in names:
-        return True
-    return any(name.split(":")[0] == model.split(":")[0] for name in names if name)
+    names = {_with_tag(m["name"]) for m in data.get("models", []) if m.get("name")}
+    # Ollama resolves an untagged name to `:latest`, so that's the only
+    # loosening that's safe. Matching on the bare name alone treated
+    # `llama3.1:70b` (or plain `llama3.1`) as pulled whenever `llama3.1:8b`
+    # was — the readiness check passed and then every request 404'd.
+    return _with_tag(model) in names
+
+
+def _with_tag(name: str) -> str:
+    """`name` with Ollama's implicit `:latest` tag made explicit."""
+    return name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
 
 
 async def ensure_model_pulled(model: str, config: Config | None = None) -> None:
@@ -334,6 +339,11 @@ async def stream_chat(
                 if not line.strip():
                     continue
                 chunk = _json.loads(line)
+                if chunk.get("error"):
+                    # A failure after the 200 (e.g. the model ran out of
+                    # memory mid-reply) arrives as an `{"error": ...}` line;
+                    # ignoring it saved a truncated reply as if complete.
+                    raise ProviderError(f"Ollama error: {chunk['error']}")
                 content = chunk.get("message", {}).get("content", "")
                 if content:
                     yield content

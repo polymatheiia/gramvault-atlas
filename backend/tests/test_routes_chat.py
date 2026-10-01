@@ -246,3 +246,22 @@ class TestSemanticSearch:
         assert filters.media_type == "reel"
         assert filters.date_from.startswith("2024-01-01")
         assert filters.date_to.startswith("2024-12-31")
+
+    def test_forwards_tag_and_favourite_and_extends_a_bare_date_to(
+        self, client: TestClient
+    ) -> None:
+        with patch(
+            "gramvault.api.routes_chat.service.semantic_search",
+            new_callable=AsyncMock,
+            return_value=([], 0),
+        ) as mock_search:
+            response = client.get(
+                "/api/chat/search",
+                params={"q": "anything", "tag": "books", "favourite": "true", "date_to": "2024-12-31"},
+            )
+
+        assert response.status_code == 200
+        filters = mock_search.call_args.kwargs["filters"]
+        assert filters.tag == "books"
+        assert filters.favourite is True
+        assert filters.date_to.startswith("2024-12-31T23:59:59")

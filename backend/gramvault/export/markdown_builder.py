@@ -67,6 +67,7 @@ _OWNED_FRONTMATTER_KEYS = {
     "hashtags",
     "enrichment",
     "source_url",
+    "favourite",
 }
 
 Layout = Literal["flat", "by-category", "by-date"]
@@ -200,6 +201,7 @@ def build_frontmatter(item: Item) -> dict[str, object]:
             "vision": any(mf.vision_caption for mf in item.media_files),
         },
         "source_url": item.permalink,
+        "favourite": item.favourite,
     }
 
 
@@ -248,6 +250,12 @@ def _build_body(item: Item, media_links: list[MediaLink]) -> str:
     sections: list[str] = []
 
     sections.append(item.caption.strip() if item.caption else "*No caption.*")
+
+    # The note written on the item page in GramVault (migration 009). Lives
+    # in the managed region: it's GramVault's copy, re-synced every export —
+    # notes written in Obsidian belong below the end marker.
+    if item.user_note and item.user_note.strip():
+        sections.append("## My note\n\n" + item.user_note.strip())
 
     vision_captions = [mf.vision_caption for mf in item.media_files if mf.vision_caption]
     if vision_captions:

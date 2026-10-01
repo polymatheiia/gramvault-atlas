@@ -440,3 +440,38 @@ def test_real_instagram_url_is_kept(tmp_path: Path) -> None:
     parsed = parse_export(zip_path)
 
     assert parsed.saved_items[0].instagram_url == "https://www.instagram.com/p/ABC123abc/"
+
+
+def test_parse_export_single_media_own_post_reads_caption_from_the_media_entry(
+    tmp_path: Path,
+) -> None:
+    """Single-media posts carry `title`/`creation_timestamp` on the media
+    entry, not the post entry; and like every export string the caption is
+    mojibake-encoded ("które" arrives as "ktÃ³re")."""
+    mojibake = "które".encode().decode("latin-1")
+    posts_json = json.dumps(
+        [
+            {
+                "media": [
+                    {
+                        "uri": "media/posts/202301/solo.jpg",
+                        "creation_timestamp": 1700000000,
+                        "title": f"{mojibake} solo caption",
+                    }
+                ]
+            }
+        ]
+    )
+    zip_path = _write_zip(
+        tmp_path,
+        "export.zip",
+        {
+            "your_instagram_activity/media/posts_1.json": posts_json,
+            "media/posts/202301/solo.jpg": b"\xff\xd8\xff solo",
+        },
+    )
+
+    post = parse_export(zip_path).own_posts[0]
+
+    assert post.caption == "które solo caption"
+    assert post.posted_at is not None and post.posted_at.year == 2023

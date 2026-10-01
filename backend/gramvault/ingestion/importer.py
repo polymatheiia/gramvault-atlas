@@ -25,14 +25,22 @@ import json
 import logging
 import sqlite3
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
 
 from gramvault.chat import fts
 from gramvault.config import Config, get_config
 from gramvault.db.session import session_scope
 from gramvault.ingestion import mediainfo
-from gramvault.ingestion.organizer import organize_zip_member
-from gramvault.ingestion.parser import ExportFormatError, OwnPost, SavedItem, parse_export
+from gramvault.ingestion.mediainfo import MediaDimensions
+from gramvault.ingestion.organizer import OrganizedMediaFile, organize_zip_member
+from gramvault.ingestion.parser import (
+    ExportFormatError,
+    OwnMediaFile,
+    OwnPost,
+    SavedItem,
+    parse_export,
+)
 from gramvault.models.schemas import ImportJob, JobStatus
 
 logger = logging.getLogger(__name__)
@@ -191,6 +199,29 @@ def _import_own_post(
 ) -> None:
     if _item_exists(conn, post.external_id):
         return
+
+    # File work first, before the first INSERT opens a write transaction:
+    # extracting + hashing a large video and ffprobing it can take seconds,
+    # and SQLite's single write lock held that long stalls every other
+    # writer in the app (cancel requests, enrich progress, tag edits).
+    # R11: width/height/duration_seconds were in the schema but never
+    # populated — nothing called ffprobe. Best-effort (None on
+    # failure/missing ffprobe): metadata, not required for the row.
+    prepared: list[tuple[OwnMediaFile, OrganizedMediaFile, MediaDimensions | None]] = []
+    for media in post.media_files:
+        if media.zip_member_name is None:
+            continue  # media bytes weren't found in this export; item metadata is still kept
+        organized = organize_zip_member(
+            zf,
+            media.zip_member_name,
+            library_dir,
+            max_bytes=config.import_.max_member_bytes,
+            max_ratio=config.import_.max_compression_ratio,
+        )
+        if organized is None:
+            continue
+        prepared.append((media, organized, mediainfo.probe(library_dir / organized.file_path)))
+
     cursor = conn.execute(
         """
         INSERT INTO items
@@ -208,22 +239,7 @@ def _import_own_post(
         ),
     )
     item_id = cursor.lastrowid
-    for media in post.media_files:
-        if media.zip_member_name is None:
-            continue  # media bytes weren't found in this export; item metadata is still kept
-        organized = organize_zip_member(
-            zf,
-            media.zip_member_name,
-            library_dir,
-            max_bytes=config.import_.max_member_bytes,
-            max_ratio=config.import_.max_compression_ratio,
-        )
-        if organized is None:
-            continue
-        # R11: width/height/duration_seconds were in the schema but never
-        # populated — nothing called ffprobe. Best-effort (None on
-        # failure/missing ffprobe): metadata, not required for the row.
-        dims = mediainfo.probe(library_dir / organized.file_path)
+    for media, organized, dims in prepared:
         conn.execute(
             """
             INSERT INTO media_files
@@ -251,6 +267,31 @@ def _import_own_post(
 # sees a response within a couple of seconds on a real export, without a
 # DB write on every single item.
 _CHECKPOINT_ITEMS = 25
+
+
+def _import_one(conn: sqlite3.Connection, import_fn: Callable[..., None], *args: object) -> bool:
+    """Import one item as its own transaction. Committing per item keeps
+    SQLite's single write lock held only for that item's INSERTs — one
+    transaction around the whole loop used to hide progress until the end
+    and block every other writer (including the cancel request itself) for
+    the entire import. A failed item is rolled back on its own, without
+    leaving partial rows behind. Returns False if the item failed."""
+    try:
+        import_fn(conn, *args)
+        conn.commit()
+    except Exception:  # noqa: BLE001 - one bad item mustn't end the import
+        conn.rollback()
+        logger.warning("import: skipping an item that failed to import", exc_info=True)
+        return False
+    return True
+
+
+def _record_progress(conn: sqlite3.Connection, job_id: int, processed: int, failed: int) -> None:
+    conn.execute(
+        "UPDATE import_jobs SET processed_items = ?, failed_items = ? WHERE id = ?",
+        (processed, failed, job_id),
+    )
+    conn.commit()
 
 
 def run_import(job_id: int, zip_path: Path, config: Config | None = None) -> ImportJob:
@@ -298,20 +339,12 @@ def run_import(job_id: int, zip_path: Path, config: Config | None = None) -> Imp
             if processed % _CHECKPOINT_ITEMS == 0 and _cancel_requested(job_id, config):
                 cancelled = True
                 break
-            try:
-                _import_saved_item(conn, saved, job_id)
-            except Exception:
+            if not _import_one(conn, _import_saved_item, saved, job_id):
                 failed += 1
             processed += 1
             if processed % _CHECKPOINT_ITEMS == 0:
-                conn.execute(
-                    "UPDATE import_jobs SET processed_items = ?, failed_items = ? WHERE id = ?",
-                    (processed, failed, job_id),
-                )
-        conn.execute(
-            "UPDATE import_jobs SET processed_items = ?, failed_items = ? WHERE id = ?",
-            (processed, failed, job_id),
-        )
+                _record_progress(conn, job_id, processed, failed)
+        _record_progress(conn, job_id, processed, failed)
 
     if not cancelled and parsed.own_posts:
         library_dir = config.resolved_library_dir
@@ -321,21 +354,14 @@ def run_import(job_id: int, zip_path: Path, config: Config | None = None) -> Imp
                 if processed % _CHECKPOINT_ITEMS == 0 and _cancel_requested(job_id, config):
                     cancelled = True
                     break
-                try:
-                    _import_own_post(conn, zf, post, job_id, library_dir, config)
-                except Exception:
+                if not _import_one(
+                    conn, _import_own_post, zf, post, job_id, library_dir, config
+                ):
                     failed += 1
                 processed += 1
                 if processed % _CHECKPOINT_ITEMS == 0:
-                    conn.execute(
-                        "UPDATE import_jobs SET processed_items = ?, failed_items = ? "
-                        "WHERE id = ?",
-                        (processed, failed, job_id),
-                    )
-            conn.execute(
-                "UPDATE import_jobs SET processed_items = ?, failed_items = ? WHERE id = ?",
-                (processed, failed, job_id),
-            )
+                    _record_progress(conn, job_id, processed, failed)
+            _record_progress(conn, job_id, processed, failed)
 
     if cancelled:
         final_status = JobStatus.FAILED.value

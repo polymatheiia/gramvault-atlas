@@ -104,7 +104,13 @@ def build_context_block(items: dict[int, Item], results: list[RetrievalResult]) 
             ai_excerpt = _truncate(mf.transcript or mf.vision_caption)
             if ai_excerpt:
                 break
-        if result.snippet and not caption_excerpt and not ai_excerpt:
+        # On-screen text is often the whole point of a silent text-overlay
+        # reel; it used to reach the model only via the snippet fallback
+        # below, i.e. never once the post had any caption at all.
+        ocr_excerpt = _truncate(
+            " ".join(mf.ocr_text.strip() for mf in item.media_files if mf.ocr_text)
+        )
+        if result.snippet and not caption_excerpt and not ai_excerpt and not ocr_excerpt:
             ai_excerpt = _truncate(result.snippet)
 
         lines.append(f"\nItem {item.id} — @{author}, {date}, media_type={item.media_type}")
@@ -112,6 +118,8 @@ def build_context_block(items: dict[int, Item], results: list[RetrievalResult]) 
             lines.append(f"  Caption: {caption_excerpt}")
         if ai_excerpt:
             lines.append(f"  AI caption/transcript: {ai_excerpt}")
+        if ocr_excerpt:
+            lines.append(f"  On-screen text: {ocr_excerpt}")
         lines.append(f"  Tags: {tag_names}")
 
     return "\n".join(lines)

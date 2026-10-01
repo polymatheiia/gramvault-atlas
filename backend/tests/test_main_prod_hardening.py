@@ -35,7 +35,10 @@ def test_docs_are_disabled_without_dev_mode(prod_client: TestClient) -> None:
     assert "swagger-ui" not in docs.text.lower()
     openapi = prod_client.get("/openapi.json")
     assert openapi.status_code in (200, 404)
-    assert openapi.headers.get("content-type", "").split(";")[0] != "application/json"
+    # Without a frontend build the 404 is FastAPI's own JSON
+    # `{"detail": "Not Found"}` — what must never come back is the schema.
+    assert '"openapi"' not in openapi.text
+    assert '"paths"' not in openapi.text
 
 
 def test_bad_host_header_is_rejected(prod_client: TestClient) -> None:

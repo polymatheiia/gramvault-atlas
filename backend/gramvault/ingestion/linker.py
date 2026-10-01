@@ -223,9 +223,10 @@ def link_local_media(
 
     with session_scope(config) as conn:
         known_ids = _load_external_ids(conn)
-        slots_by_item, report = _collect_slots(source_dir, known_ids)
         existing_counts = _existing_media_counts(conn)
+    slots_by_item, report = _collect_slots(source_dir, known_ids)
 
+    with session_scope(config) as conn:
         for item_id, slots in slots_by_item.items():
             ordered = [slots[index] for index in sorted(slots)]
 
@@ -241,7 +242,11 @@ def link_local_media(
             if row is None:
                 continue
 
-            linked_here = 0
+            # File work (hash, hardlink/copy, ffprobe) for the whole item
+            # first, then its INSERTs in one short transaction — doing the
+            # file work between INSERTs held SQLite's write lock for the
+            # entire run, blocking every other writer (see importer.py).
+            prepared = []
             for sequence_index, slot in enumerate(ordered):
                 chosen = slot.chosen()
                 if chosen is None:
@@ -257,12 +262,17 @@ def link_local_media(
                     "SELECT 1 FROM media_files WHERE item_id = ? AND file_path = ?",
                     (item_id, organized.file_path),
                 ).fetchone()
-                if already is not None:
+                if already is not None or any(
+                    p[2].file_path == organized.file_path for p in prepared
+                ):
                     continue
 
                 # R11: best-effort width/height/duration_seconds (None on
                 # failure/missing ffprobe) — see importer.py's identical call.
                 dims = mediainfo.probe(library_dir / organized.file_path)
+                prepared.append((sequence_index, file_type, organized, dims))
+
+            for sequence_index, file_type, organized, dims in prepared:
                 conn.execute(
                     """
                     INSERT INTO media_files
@@ -281,16 +291,23 @@ def link_local_media(
                         dims.duration_seconds if dims else None,
                     ),
                 )
-                linked_here += 1
 
-            if linked_here:
-                report.files_linked += linked_here
+            if prepared:
+                report.files_linked += len(prepared)
                 report.items_linked += 1
+                # New media needs captioning/transcription/re-embedding; a
+                # `done` item would otherwise be skipped by every "enrich
+                # what's pending" run (the Import page's button, `gramvault
+                # enrich`), leaving the linked media un-enriched.
+                conn.execute(
+                    "UPDATE items SET enrichment_status = 'pending' WHERE id = ?", (item_id,)
+                )
 
             resolved = _resolve_media_type(row["media_type"], row["permalink"], ordered)
             if resolved is not None:
                 conn.execute(
                     "UPDATE items SET media_type = ? WHERE id = ?", (resolved, item_id)
                 )
+            conn.commit()
 
     return report

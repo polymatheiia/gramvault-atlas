@@ -58,7 +58,7 @@ export interface paths {
          *     search (merged with a keyword pass), same as chat retrieval but
          *     without the chat completion step.
          *
-         *     `category`/`author`/`media_type`/`date_from`/`date_to` narrow the
+         *     `category`/`author`/`media_type`/`date_from`/`date_to`/`tag`/`favourite` narrow the
          *     candidates to the same facets the gallery filters on (R13 — this used
          *     to ignore every gallery filter, leaving only a client-side category
          *     filter applied after the fact over whatever the top-k happened to be).
@@ -587,11 +587,10 @@ export interface paths {
          * Cancel Import Job
          * @description Request cancellation of an in-progress import job.
          *
-         *     Import runs synchronously in v1, so in practice a job is almost
-         *     always already `done`/`failed` by the time this can be called — it's
-         *     a no-op in that case. Kept as a real endpoint (rather than removed)
-         *     so the frontend and a future background-queue version both have a
-         *     stable contract to call.
+         *     Sets `cancel_requested`; the background import checks it every
+         *     `_CHECKPOINT_ITEMS` items and stops there, ending the job `failed`
+         *     with `error_message='cancelled by user'`. A no-op on a job that
+         *     already finished.
          */
         post: operations["cancel_import_job_api_import_jobs__job_id__cancel_post"];
         delete?: never;
@@ -933,13 +932,15 @@ export interface paths {
          * Update Item Tags
          * @description Replace an item's manually-assigned tags.
          *
-         *     Decision: only tags of kind='manual' are replaced by this endpoint —
-         *     auto-generated tags (from the AI pipeline) and hashtag tags (parsed
-         *     from captions) are left untouched, since a user editing "their" tags
-         *     shouldn't accidentally wipe out AI-generated ones. Any name in
-         *     `body.tags` that doesn't already exist as a tag is created as
-         *     kind='manual'; if it already exists under any kind, the existing tag
-         *     row is simply (re-)linked to this item.
+         *     Decision: only links the user added (`item_tags.manual = 1`, migration
+         *     010) are replaced by this endpoint — auto-generated tags (from the AI
+         *     pipeline) and hashtag tags (parsed from captions) are left untouched,
+         *     since a user editing "their" tags shouldn't accidentally wipe out
+         *     AI-generated ones. Any name in `body.tags` that doesn't already exist
+         *     as a tag is created as kind='manual'; if it already exists under any
+         *     kind, the existing tag row is linked to this item and that link is
+         *     marked manual, so it can be removed again later. Item responses report
+         *     a manual link's tag with `kind='manual'`.
          */
         patch: operations["update_item_tags_api_library_items__item_id__tags_patch"];
         trace?: never;
@@ -2464,6 +2465,10 @@ export interface operations {
                 media_type?: components["schemas"]["MediaType"] | null;
                 date_from?: string | null;
                 date_to?: string | null;
+                /** @description Filter by tag name */
+                tag?: string | null;
+                /** @description Only favourited items */
+                favourite?: boolean;
             };
             header?: never;
             path?: never;

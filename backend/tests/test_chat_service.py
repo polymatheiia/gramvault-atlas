@@ -230,7 +230,9 @@ class TestStreamMessage:
         self, tmp_config: Config
     ) -> None:
         """R7: a retrieval error must not persist the user's turn — no
-        question with a guaranteed-missing reply left in history."""
+        question with a guaranteed-missing reply left in history. It ends
+        the stream with an `error` event rather than escaping the generator
+        (which closed the SSE stream with no terminal event)."""
         from gramvault.db.session import get_connection, init_db
 
         conn = get_connection(tmp_config)
@@ -238,17 +240,19 @@ class TestStreamMessage:
         session = service.create_session(conn, title="test")
         conn.close()
 
-        with (
-            patch.object(
-                service.retrieval,
-                "hybrid_search",
-                new_callable=AsyncMock,
-                side_effect=RuntimeError("chroma is on fire"),
-            ),
-            pytest.raises(RuntimeError, match="chroma is on fire"),
+        with patch.object(
+            service.retrieval,
+            "hybrid_search",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("chroma is on fire"),
         ):
-            async for _ in service.stream_message(session.id, "any pasta?", config=tmp_config):
-                pass
+            events = [
+                event
+                async for event in service.stream_message(session.id, "any pasta?", config=tmp_config)
+            ]
+
+        assert [e["event"] for e in events] == ["error"]
+        assert "chroma is on fire" in json.loads(events[0]["data"])["detail"]
 
         conn = get_connection(tmp_config)
         messages = service.list_messages(conn, session.id)
@@ -278,6 +282,43 @@ class TestStreamMessage:
 
         assert events[-1]["event"] == "error"
         assert "Ollama" in json.loads(events[-1]["data"])["detail"]
+
+    @pytest.mark.anyio
+    async def test_unexpected_mid_stream_failure_ends_with_error_event(
+        self, tmp_config: Config
+    ) -> None:
+        """A provider error that isn't a readiness failure (an HTTP 529 /
+        500 mid-reply) used to escape the generator: the SSE stream closed
+        with no `done`/`error` event and the chat UI waited forever."""
+        from gramvault.db.session import get_connection, init_db
+
+        conn = get_connection(tmp_config)
+        init_db(conn)
+        session = service.create_session(conn, title="test")
+        conn.close()
+
+        async def _failing_stream(messages, model=None, config=None):
+            yield "partial "
+            raise RuntimeError("upstream 529 overloaded")
+
+        with (
+            patch.object(service.retrieval, "hybrid_search", new_callable=AsyncMock, return_value=[]),
+            patch.object(service.retrieval, "fetch_items", return_value={}),
+            patch("gramvault.ai.ollama_client.stream_chat", new=_failing_stream),
+        ):
+            events = [
+                event
+                async for event in service.stream_message(session.id, "hello", config=tmp_config)
+            ]
+
+        assert [e["event"] for e in events] == ["sources", "token", "error"]
+        assert "529" in json.loads(events[-1]["data"])["detail"]
+        conn = get_connection(tmp_config)
+        try:
+            contents = [m.content for m in service.list_messages(conn, session.id)]
+        finally:
+            conn.close()
+        assert contents == ["hello", "partial "]  # the partial reply is still kept
 
 
 class TestSemanticSearch:

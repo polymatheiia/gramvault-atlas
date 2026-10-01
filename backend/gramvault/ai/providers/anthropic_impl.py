@@ -180,6 +180,14 @@ class AnthropicProvider:
                         text = event.get("delta", {}).get("text")
                         if text:
                             yield text
+                    elif event.get("type") == "error":
+                        # e.g. `overloaded_error` mid-stream — without this
+                        # the stream just ended and the partial reply was
+                        # saved as if complete.
+                        error = event.get("error") or {}
+                        raise ProviderError(
+                            f"Anthropic error: {error.get('message') or error.get('type') or event}"
+                        )
         except httpx.ConnectError as exc:
             raise ProviderNotReadyError(f"Could not reach {self.base_url}: {exc}") from exc
         finally:

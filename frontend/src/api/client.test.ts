@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
   api,
+  fetchCaptionsObjectUrl,
   getAuthToken,
   isNotFound,
   isNotImplemented,
@@ -83,6 +84,19 @@ describe('parseResponse / ApiError', () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1)
   })
 
+  it('turns a non-JSON error body into an ApiError instead of a SyntaxError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('<html><body>502 Bad Gateway</body></html>', { status: 502 })),
+    )
+
+    const err = await api.get('/api/jobs').catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(502)
+    expect((err as ApiError).message).toBe('Request failed (502)')
+  })
+
   it('treats a 204 as an empty success rather than a JSON parse attempt', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })))
     await expect(api.delete('/api/library/items/1')).resolves.toBeUndefined()
@@ -145,6 +159,19 @@ describe('uploadFile (XHR path)', () => {
     expect(xhr.headers.Authorization).toBe('Bearer up-token')
     expect(xhr.sentBody).toBeInstanceOf(FormData)
     expect((xhr.sentBody as FormData).get('file')).toBe(file)
+  })
+
+  it('rejects (rather than hanging forever) on a non-JSON error body', async () => {
+    const file = new File(['hello'], 'export.zip')
+    const pending = uploadFile('/api/import/upload', file)
+    const xhr = FakeXHR.instances[0]
+    xhr.status = 413
+    xhr.responseText = '<html><body>413 Request Entity Too Large</body></html>'
+
+    const err = await pending.catch((e: unknown) => e)
+
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(413)
   })
 
   it('omits Authorization when no token is stored', async () => {
@@ -215,6 +242,28 @@ describe('streamChatMessage', () => {
     expect(tokens).toEqual(['hi'])
   })
 
+  it('calls onError when the stream ends without a done or error event', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(sseBody('event: token\r\ndata: {"content":"partial"}\r\n\r\n')),
+    )
+    const tokens: string[] = []
+    let error: string | undefined
+    await streamChatMessage(1, 'hello', { onToken: (t) => tokens.push(t), onError: (d) => (error = d) })
+    expect(tokens).toEqual(['partial'])
+    expect(error).toMatch(/closed before the reply finished/)
+  })
+
+  it('does not call onError after a done event', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(sseBody('event: done\r\ndata: {"message_id":1,"content":"hi","citations":[]}\r\n\r\n')),
+    )
+    const onError = vi.fn()
+    await streamChatMessage(1, 'hello', { onError })
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it('calls onError with the response detail on a non-ok response', async () => {
     vi.stubGlobal(
       'fetch',
@@ -268,5 +317,30 @@ describe('streamChatMessage', () => {
 
     expect(stopped).toBe(true)
     expect(error).toBeUndefined()
+  })
+})
+
+describe('fetchCaptionsObjectUrl', () => {
+  beforeEach(() => {
+    // jsdom has no URL.createObjectURL.
+    vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:captions') }))
+  })
+
+  it('fetches the VTT with the bearer token and returns a blob: URL', async () => {
+    setAuthToken('vtt-token')
+    const fetchMock = vi.fn().mockResolvedValue(new Response('WEBVTT\n\n', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const url = await fetchCaptionsObjectUrl(7)
+
+    expect(url).toBe('blob:captions')
+    const [path, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(path).toBe('/api/library/media/7/captions.vtt')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer vtt-token')
+  })
+
+  it('returns null when the file has no captions', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail: 'none' }, 404)))
+    await expect(fetchCaptionsObjectUrl(7)).resolves.toBeNull()
   })
 })

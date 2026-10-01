@@ -222,7 +222,7 @@ export function Gallery() {
 
         const res = await api.get<SemanticSearchResponse>(
           '/api/chat/search',
-          { q: search, top_k: topK, ...facets },
+          { q: search, top_k: topK, ...facets, ...(favouriteOnly ? { favourite: true } : {}) },
           signal,
         )
         let results = res.results

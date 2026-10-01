@@ -145,11 +145,10 @@ async def cancel_import_job(
 ) -> ImportJob:
     """Request cancellation of an in-progress import job.
 
-    Import runs synchronously in v1, so in practice a job is almost
-    always already `done`/`failed` by the time this can be called — it's
-    a no-op in that case. Kept as a real endpoint (rather than removed)
-    so the frontend and a future background-queue version both have a
-    stable contract to call.
+    Sets `cancel_requested`; the background import checks it every
+    `_CHECKPOINT_ITEMS` items and stops there, ending the job `failed`
+    with `error_message='cancelled by user'`. A no-op on a job that
+    already finished.
     """
     job = importer.cancel_import_job(job_id, config)
     if job is None:

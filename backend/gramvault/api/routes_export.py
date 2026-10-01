@@ -130,8 +130,10 @@ def _run_export_job(
             vault_subfolder,
             category_digests=category_digests,
             # A partial (item_ids) export must not prune MOCs for categories
-            # that simply weren't in the subset.
+            # that simply weren't in the subset, nor rebuild the index /
+            # dashboard / MOCs from just the subset.
             prune_stale_mocs=item_ids is None,
+            write_overview=item_ids is None,
         )
     except (VaultNotConfiguredError, VaultPathNotFoundError, InvalidSubfolderError) as exc:
         error_message = str(exc)

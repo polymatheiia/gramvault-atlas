@@ -103,6 +103,19 @@ def upsert_item(
     )
 
 
+def prune_item_chunks(item_id: int, chunk_count: int, config: Config | None = None) -> None:
+    """Delete `item_id`'s chunks beyond the first `chunk_count` (the
+    `upsert_item` ids `"{item_id}:0:{index}"`). Re-embedding an item whose
+    document got shorter — or empty — otherwise left its old tail chunks in
+    the index, still matching searches with text the item no longer has."""
+    collection = get_collection(config)
+    keep = {f"{item_id}:0:{index}" for index in range(chunk_count)}
+    existing = collection.get(where={"item_id": item_id}, include=[])["ids"]
+    stale = [point_id for point_id in existing if point_id not in keep]
+    if stale:
+        collection.delete(ids=stale)
+
+
 def get_item_embedding(item_id: int, config: Config | None = None) -> list[float] | None:
     """The stored embedding for one of `item_id`'s chunks (arbitrarily the
     first one Chroma returns), for "find similar" — reuses whatever's

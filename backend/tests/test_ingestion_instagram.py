@@ -33,8 +33,16 @@ class _FakePost:
         self.date_utc = datetime(2026, 1, 2, 3, 4, 5)
 
 
-class _ConnectionException(Exception):
+class _InstaloaderException(Exception):
     pass
+
+
+class _ConnectionException(_InstaloaderException):
+    pass
+
+
+class _QueryReturnedForbiddenException(_InstaloaderException):
+    """Like the real one, *not* a ConnectionException subclass."""
 
 
 class _FakeLoader:
@@ -42,6 +50,9 @@ class _FakeLoader:
     saved_posts: list[_FakePost] = []
     login_user: str | None = "tester"
     fail_downloads: set[str] = set()
+    forbidden_downloads: set[str] = set()
+    # Raise this from the saved-feed iterator after yielding every post.
+    walk_error: Exception | None = None
 
     def __init__(self, **kwargs):
         self.dirname_pattern = kwargs.get("dirname_pattern")
@@ -63,6 +74,8 @@ class _FakeLoader:
     def download_post(self, post, target=""):
         if post.shortcode in _FakeLoader.fail_downloads:
             raise _ConnectionException("boom")
+        if post.shortcode in _FakeLoader.forbidden_downloads:
+            raise _QueryReturnedForbiddenException("403 Forbidden")
         out = Path(self.dirname_pattern)
         out.mkdir(parents=True, exist_ok=True)
         (out / f"2026-01-02_03-04-05_UTC_{post.shortcode}.jpg").write_bytes(
@@ -73,14 +86,22 @@ class _FakeLoader:
 class _FakeProfile:
     @staticmethod
     def own_profile(context):
-        return SimpleNamespace(get_saved_posts=lambda: iter(list(_FakeLoader.saved_posts)))
+        def saved_posts():
+            yield from list(_FakeLoader.saved_posts)
+            if _FakeLoader.walk_error is not None:
+                raise _FakeLoader.walk_error
+
+        return SimpleNamespace(get_saved_posts=saved_posts)
 
 
 def _fake_module() -> SimpleNamespace:
     return SimpleNamespace(
         Instaloader=_FakeLoader,
         Profile=_FakeProfile,
-        exceptions=SimpleNamespace(ConnectionException=_ConnectionException),
+        exceptions=SimpleNamespace(
+            InstaloaderException=_InstaloaderException,
+            ConnectionException=_ConnectionException,
+        ),
     )
 
 
@@ -90,6 +111,8 @@ def _fake_instaloader(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeLoader.saved_posts = []
     _FakeLoader.login_user = "tester"
     _FakeLoader.fail_downloads = set()
+    _FakeLoader.forbidden_downloads = set()
+    _FakeLoader.walk_error = None
 
 
 @pytest.fixture
@@ -133,6 +156,17 @@ def test_parse_cookies_accepts_netscape():
         ".instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc\n"
         ".instagram.com\tTRUE\t/\tTRUE\t0\tcsrftoken\tx\n"
         ".example.com\tTRUE\t/\tTRUE\t0\tirrelevant\tnope\n"
+    )
+    assert instagram.parse_cookies(text) == {"sessionid": "abc", "csrftoken": "x"}
+
+
+def test_parse_cookies_keeps_httponly_netscape_lines():
+    """curl-style cookies.txt prefixes HttpOnly cookies — sessionid among
+    them — with `#HttpOnly_`; those lines were skipped as comments."""
+    text = (
+        "# Netscape HTTP Cookie File\n"
+        "#HttpOnly_.instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc\n"
+        ".instagram.com\tTRUE\t/\tTRUE\t0\tcsrftoken\tx\n"
     )
     assert instagram.parse_cookies(text) == {"sessionid": "abc", "csrftoken": "x"}
 
@@ -307,6 +341,47 @@ def test_pull_counts_download_failures(cfg: Config):
     assert result.downloaded == 1
     assert result.failed == 1
     assert _external_ids(cfg) == {"GOODaa"}  # only the downloaded one imported
+
+
+def test_pull_survives_a_non_connection_error_on_one_post(cfg: Config):
+    """Only ConnectionException was caught; a 403 on one post (or any other
+    InstaloaderException) aborted the walk and threw away every download."""
+    _init_db(cfg)
+    instagram.connect_from_cookies({"sessionid": "abc"}, cfg)
+    _FakeLoader.forbidden_downloads = {"BADbbb"}
+    _FakeLoader.saved_posts = [_FakePost("GOODaa"), _FakePost("BADbbb"), _FakePost("GOODcc")]
+
+    result = instagram.pull_saved(cfg, max_count=50, _sleep=lambda: None)
+
+    assert (result.downloaded, result.failed) == (2, 1)
+    assert _external_ids(cfg) == {"GOODaa", "GOODcc"}
+
+
+def test_pull_keeps_downloads_when_the_feed_walk_fails(cfg: Config):
+    _init_db(cfg)
+    instagram.connect_from_cookies({"sessionid": "abc"}, cfg)
+    _FakeLoader.saved_posts = [_FakePost("GOODaa"), _FakePost("GOODbb")]
+    _FakeLoader.walk_error = _ConnectionException("429 Too Many Requests")
+
+    result = instagram.pull_saved(cfg, max_count=50, _sleep=lambda: None)
+
+    assert result.stopped_reason.startswith("stopped early")
+    assert result.imported == 2
+    assert _external_ids(cfg) == {"GOODaa", "GOODbb"}
+
+
+def test_pull_gives_up_after_repeated_download_failures(cfg: Config):
+    _init_db(cfg)
+    instagram.connect_from_cookies({"sessionid": "abc"}, cfg)
+    posts = [_FakePost("GOODaa")] + [_FakePost(f"BAD{i:03d}") for i in range(10)]
+    _FakeLoader.forbidden_downloads = {p.shortcode for p in posts[1:]}
+    _FakeLoader.saved_posts = posts
+
+    result = instagram.pull_saved(cfg, max_count=50, _sleep=lambda: None)
+
+    assert result.failed == 5
+    assert "in a row" in result.stopped_reason
+    assert _external_ids(cfg) == {"GOODaa"}
 
 
 def test_pull_with_no_new_posts_is_a_noop(cfg: Config):

@@ -383,3 +383,72 @@ def test_reimport_label_values_export_dedupes(tmp_path: Path, tmp_config: Config
     with session_scope(tmp_config) as conn:
         assert conn.execute("SELECT COUNT(*) AS n FROM items").fetchone()["n"] == 1
         assert conn.execute("SELECT COUNT(*) AS n FROM item_tags").fetchone()["n"] == 2
+
+
+def _write_many_own_posts_export(tmp_path: Path, count: int) -> Path:
+    posts = [
+        {
+            "title": f"post {i}",
+            "creation_timestamp": 1700000000 + i,
+            "media": [{"uri": f"media/posts/202301/p{i}.jpg", "creation_timestamp": 1700000000 + i}],
+        }
+        for i in range(count)
+    ]
+    zip_path = tmp_path / "many_own_posts.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("your_instagram_activity/media/posts_1.json", json.dumps(posts))
+        for i in range(count):
+            zf.writestr(f"media/posts/202301/p{i}.jpg", b"\xff\xd8\xff\xe0" + f"jpeg {i}".encode())
+    return zip_path
+
+
+def test_run_import_does_not_hold_the_write_lock_while_working(
+    tmp_path: Path, tmp_config: Config, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Import used to run each phase in one long write transaction: the
+    progress written every _CHECKPOINT_ITEMS items stayed invisible until
+    the phase ended, and a cancel request (or any other write — enrich
+    progress, tag edits, chat) blocked on SQLite's write lock until the
+    import finished, so cancelling never worked. Mid-run, from inside the
+    slow per-media step, the lock must be free, progress must be visible,
+    and a cancel must land and stop the run at the next checkpoint."""
+    import sqlite3
+
+    from gramvault.ingestion import importer, mediainfo
+
+    zip_path = _write_many_own_posts_export(tmp_path, 60)
+    job = create_import_job(zip_path, tmp_config)
+    assert job.id is not None
+    seen: dict[str, object] = {}
+    calls = 0
+
+    def probe(path: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls != 30:
+            return None
+        other = sqlite3.connect(tmp_config.resolved_db_path, timeout=0)
+        try:
+            other.execute("BEGIN IMMEDIATE")  # raises "database is locked" if held
+            other.rollback()
+            seen["lock_free"] = True
+        except sqlite3.OperationalError:
+            seen["lock_free"] = False
+        finally:
+            other.close()
+        if seen["lock_free"]:
+            seen["progress"] = importer.get_import_job(job.id, tmp_config).processed_items
+            cancel_import_job(job.id, tmp_config)
+        return None
+
+    monkeypatch.setattr(mediainfo, "probe", probe)
+    result = run_import(job.id, zip_path, tmp_config)
+
+    assert seen["lock_free"] is True
+    assert seen["progress"] == 25  # the last checkpoint before item 30
+    assert result.status == JobStatus.FAILED
+    assert result.error_message == "cancelled by user"
+    assert result.processed_items == 50  # stopped at the next checkpoint
+    with session_scope(tmp_config) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM items").fetchone()[0] == 50
+        assert conn.execute("SELECT COUNT(*) FROM media_files").fetchone()[0] == 50

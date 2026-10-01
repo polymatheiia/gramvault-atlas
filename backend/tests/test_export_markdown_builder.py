@@ -132,7 +132,7 @@ class TestFrontmatter:
         item = _make_item()
         fm = build_frontmatter(item)
         assert fm["author"] == "jane.doe"
-        assert fm["date"] == "2024-03-15T10:30:00"
+        assert fm["date"] == "2024-03-15T10:30:00+00:00"  # naive DB timestamps are UTC
         assert fm["type"] == "photo"
         assert fm["tags"] == ["sunset", "travel"]
         assert fm["source_url"] == "https://instagram.com/p/abc123/"
@@ -158,7 +158,7 @@ class TestFrontmatter:
 
     def test_falls_back_to_imported_at(self) -> None:
         item = _make_item(taken_at=None, imported_at=datetime(2023, 1, 1))
-        assert build_frontmatter(item)["date"] == "2023-01-01T00:00:00"
+        assert build_frontmatter(item)["date"] == "2023-01-01T00:00:00+00:00"
 
 
 class TestBuildNoteMarkdown:

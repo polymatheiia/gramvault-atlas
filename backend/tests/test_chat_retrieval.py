@@ -317,3 +317,31 @@ class TestFetchItems:
 
     def test_empty_input_returns_empty_dict(self, tmp_db_conn: sqlite3.Connection) -> None:
         assert retrieval.fetch_items(tmp_db_conn, []) == {}
+
+    def test_tag_and_favourite_filters(self, tmp_db_conn: sqlite3.Connection) -> None:
+        tagged = _insert_item(tmp_db_conn, caption="tagged")
+        favourite = _insert_item(tmp_db_conn, caption="favourite")
+        both = _insert_item(tmp_db_conn, caption="both")
+        tmp_db_conn.execute("INSERT INTO tags (name, kind) VALUES ('books', 'auto')")
+        tag_id = tmp_db_conn.execute("SELECT id FROM tags WHERE name = 'books'").fetchone()["id"]
+        for item_id in (tagged, both):
+            tmp_db_conn.execute(
+                "INSERT INTO item_tags (item_id, tag_id) VALUES (?, ?)", (item_id, tag_id)
+            )
+        tmp_db_conn.execute(
+            "UPDATE items SET favourite = 1 WHERE id IN (?, ?)", (favourite, both)
+        )
+        tmp_db_conn.commit()
+        ids = [tagged, favourite, both]
+
+        assert retrieval.filter_item_ids(tmp_db_conn, ids, SearchFilters(tag="books")) == {
+            tagged,
+            both,
+        }
+        assert retrieval.filter_item_ids(tmp_db_conn, ids, SearchFilters(favourite=True)) == {
+            favourite,
+            both,
+        }
+        assert retrieval.filter_item_ids(
+            tmp_db_conn, ids, SearchFilters(tag="books", favourite=True)
+        ) == {both}
