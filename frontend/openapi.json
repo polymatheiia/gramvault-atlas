@@ -4715,7 +4715,7 @@
     },
     "/api/import/jobs/{job_id}/cancel": {
       "post": {
-        "description": "Request cancellation of an in-progress import job.\n\nImport runs synchronously in v1, so in practice a job is almost\nalways already `done`/`failed` by the time this can be called \u2014 it's\na no-op in that case. Kept as a real endpoint (rather than removed)\nso the frontend and a future background-queue version both have a\nstable contract to call.",
+        "description": "Request cancellation of an in-progress import job.\n\nSets `cancel_requested`; the background import checks it every\n`_CHECKPOINT_ITEMS` items and stops there, ending the job `failed`\nwith `error_message='cancelled by user'`. A no-op on a job that\nalready finished.",
         "operationId": "cancel_import_job_api_import_jobs__job_id__cancel_post",
         "parameters": [
           {

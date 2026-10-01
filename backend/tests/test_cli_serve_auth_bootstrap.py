@@ -115,3 +115,30 @@ def test_token_command_show_and_rotate(
 
     show_again = runner.invoke(app, ["token", "show"])
     assert show_again.stdout.strip() != first_token
+
+
+def test_generated_token_is_enforced_without_a_config_yaml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No config.yaml anywhere (a bare `pip install` + `gramvault serve`):
+    the token written to ./secrets.yaml must be the one the running server
+    enforces. It used to be written but never read back — `get_config()`
+    only looked for secrets.yaml beside a config.yaml it had found — so the
+    API ran wide open while the CLI printed a token."""
+    monkeypatch.delenv(config_module.CONFIG_PATH_ENV_VAR, raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("uvicorn.run", MagicMock())
+    config_module.get_config.cache_clear()
+
+    first = runner.invoke(app, ["serve"])
+    assert first.exit_code == 0
+    assert "Generated an API token" in first.stdout
+    written = yaml.safe_load((tmp_path / "secrets.yaml").read_text())["auth"]["token"]
+
+    config_module.get_config.cache_clear()
+    assert config_module.get_config().auth.token == written
+
+    second = runner.invoke(app, ["serve"])
+    assert second.exit_code == 0
+    assert "Generated an API token" not in second.stdout
+    config_module.get_config.cache_clear()

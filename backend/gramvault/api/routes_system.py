@@ -18,7 +18,8 @@ from gramvault.ai import ollama_client
 from gramvault.ai.keyframes import ffmpeg_available
 from gramvault.api.deps import get_config_dependency, get_config_path_dependency
 from gramvault.config import Config
-from gramvault.db.session import get_connection, schema_version as get_schema_version
+from gramvault.db.session import get_connection
+from gramvault.db.session import schema_version as get_schema_version
 from gramvault.models.schemas import JobKind, JobStatus
 
 router = APIRouter(prefix="/api/system", tags=["system"])

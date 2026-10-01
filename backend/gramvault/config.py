@@ -377,15 +377,14 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
     return base
 
 
-def _load_secrets(config_path: Path | None) -> dict[str, Any]:
+def _load_secrets(config_path: Path) -> dict[str, Any]:
     """Read `secrets.yaml` sitting beside `config.yaml`, if present.
+    `config.yaml` itself needn't exist — see `load_config`.
 
     Shape mirrors the parts of Config that hold credentials:
         providers: {anthropic: {api_key: sk-...}}
         auth: {token: ...}
     """
-    if config_path is None:
-        return {}
     secrets_path = config_path.parent / SECRETS_FILENAME
     if not secrets_path.exists():
         return {}
@@ -412,10 +411,14 @@ def load_config(path: Path | None = None) -> Config:
     This does NOT cache — use `get_config()` for the cached singleton.
     Passing an explicit `path` is mainly useful for tests.
     """
-    config_path = path if path is not None else _find_config_path()
+    # Same resolution `get_config_path()` / `get_secrets_path()` use for
+    # writes, so a `secrets.yaml` written with no `config.yaml` present
+    # (e.g. the auth token `gramvault serve` generates on first run) is
+    # read back rather than silently ignored — which left the API open.
+    config_path = path if path is not None else get_config_path()
 
     raw: dict[str, Any] = {}
-    if config_path is not None and config_path.exists():
+    if config_path.exists():
         with config_path.open("r", encoding="utf-8") as f:
             loaded = yaml.safe_load(f)
             if loaded:

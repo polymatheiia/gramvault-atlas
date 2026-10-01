@@ -108,3 +108,34 @@ def test_restore_backup_round_trips_data_and_chroma(seeded_config: Config, tmp_p
 def test_restore_backup_missing_file_raises(seeded_config: Config, tmp_path: Path) -> None:
     with pytest.raises(BackupError):
         restore_backup(seeded_config, tmp_path / "nope.tar.gz")
+
+
+def test_restore_backup_ignores_a_stale_wal(seeded_config: Config, tmp_path: Path) -> None:
+    """A `-wal` left beside the DB (a crash, or the server still running)
+    must not be replayed onto the restored file. Restore used to copy the
+    snapshot over `gramvault.db` and leave the old WAL in place, so SQLite
+    re-applied post-backup writes — or failed outright — on the next open."""
+    archive = create_backup(seeded_config, tmp_path / "backups")
+
+    # Post-backup writes that live only in the WAL: this connection stays
+    # open, so nothing is checkpointed back into the main file.
+    live = get_connection(seeded_config)
+    live.execute("PRAGMA wal_autocheckpoint = 0")
+    for name in ("bob", "carol", "dave"):
+        live.execute("INSERT INTO authors (username) VALUES (?)", (name,))
+    live.commit()
+    wal = Path(f"{seeded_config.resolved_db_path}-wal")
+    assert wal.is_file() and wal.stat().st_size > 0
+
+    try:
+        restore_backup(seeded_config, archive)
+    finally:
+        live.close()
+
+    fresh = get_connection(seeded_config)
+    try:
+        assert fresh.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        usernames = {r["username"] for r in fresh.execute("SELECT username FROM authors")}
+    finally:
+        fresh.close()
+    assert usernames == {"alice"}
