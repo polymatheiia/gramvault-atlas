@@ -20,7 +20,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from gramvault.ai import embedding_store
-from gramvault.api.deps import get_config_dependency
+from gramvault.api.deps import get_config_dependency, inclusive_date_to
 from gramvault.chat import fts
 from gramvault.chat.retrieval import fetch_items
 from gramvault.config import Config
@@ -236,6 +236,7 @@ def _item_filter_sql(
     if date_from:
         clauses.append("items.taken_at >= ?")
         params.append(date_from.isoformat())
+    date_to = inclusive_date_to(date_to)
     if date_to:
         clauses.append("items.taken_at <= ?")
         params.append(date_to.isoformat())

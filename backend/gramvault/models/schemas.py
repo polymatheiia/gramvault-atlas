@@ -20,11 +20,11 @@ defaults) — these models cross the API boundary the frontend depends on.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class MediaType(StrEnum):
@@ -89,6 +89,17 @@ class ORMBase(BaseModel):
     via attribute access."""
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _naive_datetimes_are_utc(cls, value: Any) -> Any:
+        # Every `created_at`/`imported_at`/`started_at`/... column defaults to
+        # SQLite's `datetime('now')`: UTC, but with no offset. Serialized as-is
+        # ("2026-10-01T15:10:00"), browsers parse it as *local* time, so every
+        # timestamp and elapsed-time label was off by the viewer's UTC offset.
+        if isinstance(value, datetime) and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
 
 
 class Author(ORMBase):

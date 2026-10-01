@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from gramvault.ai.errors import ProviderNotReadyError
-from gramvault.api.deps import get_config_dependency
+from gramvault.api.deps import get_config_dependency, inclusive_date_to
 from gramvault.chat import service
 from gramvault.chat.retrieval import SearchFilters
 from gramvault.config import Config
@@ -169,6 +169,8 @@ async def semantic_search(
     media_type: MediaType | None = Query(default=None, description="Filter by media type"),
     date_from: datetime | None = Query(default=None),
     date_to: datetime | None = Query(default=None),
+    tag: str | None = Query(default=None, description="Filter by tag name"),
+    favourite: bool = Query(default=False, description="Only favourited items"),
     config: Config = Depends(get_config_dependency),
 ) -> SemanticSearchResponse:
     """Semantic search over the library (captions/transcripts/vision
@@ -177,7 +179,7 @@ async def semantic_search(
     search (merged with a keyword pass), same as chat retrieval but
     without the chat completion step.
 
-    `category`/`author`/`media_type`/`date_from`/`date_to` narrow the
+    `category`/`author`/`media_type`/`date_from`/`date_to`/`tag`/`favourite` narrow the
     candidates to the same facets the gallery filters on (R13 — this used
     to ignore every gallery filter, leaving only a client-side category
     filter applied after the fact over whatever the top-k happened to be).
@@ -187,7 +189,9 @@ async def semantic_search(
         author=author,
         media_type=media_type.value if media_type else None,
         date_from=date_from.isoformat() if date_from else None,
-        date_to=date_to.isoformat() if date_to else None,
+        date_to=inclusive_date_to(date_to).isoformat() if date_to else None,
+        tag=tag,
+        favourite=favourite,
     )
     try:
         raw_results, total = await service.semantic_search(

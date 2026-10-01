@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, time
 from pathlib import Path
 
 from gramvault.config import Config, get_config, get_config_path
@@ -26,3 +27,14 @@ def get_config_path_dependency() -> Path:
     write to the real project's config.yaml.
     """
     return get_config_path()
+
+
+def inclusive_date_to(value: datetime | None) -> datetime | None:
+    """Upper bound for a `date_to` filter. A bare date (`YYYY-MM-DD`, what
+    the gallery's date input sends) parses to midnight, so used as-is
+    `taken_at <= date_to` excluded everything on that day after 00:00 — a
+    one-day range matched nothing. A midnight bound means "through the end
+    of that day"."""
+    if value is None or value.time() != time.min:
+        return value
+    return value.replace(hour=23, minute=59, second=59, microsecond=999_999)

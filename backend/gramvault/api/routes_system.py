@@ -9,6 +9,7 @@ covers "is one configured").
 from __future__ import annotations
 
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends
@@ -94,6 +95,21 @@ def _disk_free_bytes(path: Path) -> int | None:
     return None
 
 
+def _sqlite_utc_iso(value: str | None) -> str | None:
+    """`datetime('now')` text ("2026-10-01 15:10:00", UTC, no offset) as an
+    ISO-8601 string with an explicit offset, so a browser doesn't read it as
+    local time."""
+    if not value:
+        return value
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.isoformat()
+
+
 async def build_health_response(config: Config) -> HealthResponse:
     ollama_reachable = await ollama_client.check_health(config)
     conn = get_connection(config)
@@ -125,7 +141,7 @@ async def build_health_response(config: Config) -> HealthResponse:
         enriched_count=enriched_count,
         categorized_count=categorized_count,
         needs_review_count=needs_review_count,
-        last_pull_at=last_pull_row["finished_at"] if last_pull_row else None,
+        last_pull_at=_sqlite_utc_iso(last_pull_row["finished_at"]) if last_pull_row else None,
         schema_version=sv,
         ffmpeg_found=ffmpeg_available(),
         disk_free_bytes=_disk_free_bytes(config.resolved_library_dir),
